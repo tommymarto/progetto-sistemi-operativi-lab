@@ -1,37 +1,44 @@
 
 CC			=  gcc
 CFLAGS	    += -std=c11 -Wall -Werror -pedantic
-INCLUDES	= -I ./utils/includes
+INCLUDES	= -I ./common/src
 LDFLAGS 	= 
 LIBS		= 
-OPTFLAGS	= -g -O3 
+OPTFLAGS	= -g
+
+# folder structure
+SRC_DIR := src
+OBJ_DIR := obj
+BIN_DIR := bin
 
 # aggiungere qui altri targets
-SUBDIRS			= $(wildcard */.)
-SUBDIRSCLEAN 	= $(SUBDIRS)
+SRC_PREFIX 		= src
+PROJECTS_LIST	= server client common
+PROJECTS		= $(addprefix ./$(SRC_PREFIX)/, $(PROJECTS_LIST))
 
-.PHONY: all clean $(SUBDIRS) $(SUBDIRSCLEAN)
+export
+
+.PHONY: all clean subdir-make subdir-clean
 .SUFFIXES: .c .h
 
-all: $(SUBDIRS)
+all: subdir-make | $(BIN_DIR)
+	$(foreach subdir, $(PROJECTS_LIST), cp -r ./$(SRC_PREFIX)/$(subdir)/bin ./bin/$(subdir);)
 
-$(SUBDIRS):
-	$(MAKE) -C $@
+$(BIN_DIR): 
+	mkdir -p $@
 
-%: %.c
-	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $< $(LDFLAGS) $(LIBS)
+subdir-make:
+	$(foreach subdir, $(PROJECTS), $(MAKE) -C $(subdir);)
 
-%.o: %.c
-	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -c -o $@ $<
+clean: subdir-clean
+	rm -rf bin
+
+subdir-clean:
+	$(foreach subdir, $(PROJECTS), $(MAKE) -C $(subdir) clean;)
 
 
-clean: $(SUBDIRSCLEAN)
-
-$(SUBDIRSCLEAN):
-	@cd $@; $(MAKE) clean
-
-cleanall: clean
-	-rm -f *.o *~ mat_dump.txt mat_dump.dat
+# cleanall: clean
+# 	-rm -f *.o *~ mat_dump.txt mat_dump.dat
 
 
 
