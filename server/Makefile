@@ -1,2 +1,0 @@
-clean:
-	echo "cleaned server"

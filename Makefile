@@ -35,10 +35,3 @@ clean: subdir-clean
 
 subdir-clean:
 	$(foreach subdir, $(PROJECTS), $(MAKE) -C $(subdir) clean;)
-
-
-# cleanall: clean
-# 	-rm -f *.o *~ mat_dump.txt mat_dump.dat
-
-
-
