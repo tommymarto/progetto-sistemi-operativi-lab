@@ -1,7 +1,7 @@
 
 CC			=  gcc
-CFLAGS	    += -std=c11 -Wall -Werror -pedantic
-INCLUDES	= -I ./common/src
+CFLAGS	    += -std=c11 -Wall -Werror -pedantic-errors
+INCLUDES	= -I $(PWD)/common/src -I ./include 
 LDFLAGS 	= 
 LIBS		= 
 OPTFLAGS	= -g
@@ -22,7 +22,7 @@ export
 .SUFFIXES: .c .h
 
 all: subdir-make | $(BIN_DIR)
-	$(foreach subdir, $(PROJECTS_LIST), cp -r ./$(SRC_PREFIX)/$(subdir)/bin ./bin/$(subdir);)
+	$(foreach subdir, $(PROJECTS_LIST), cp -r ./$(SRC_PREFIX)/$(subdir)/bin/. ./bin/$(subdir);)
 
 $(BIN_DIR): 
 	mkdir -p $@
