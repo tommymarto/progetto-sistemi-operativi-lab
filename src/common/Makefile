@@ -3,4 +3,4 @@ all:
 	mkdir -p obj
 
 clean:
-	rm -rf bin obj
+	rm -rf $(BIN_DIR) $(OBJ_DIR)

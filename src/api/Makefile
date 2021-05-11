@@ -1,6 +1,8 @@
-EXE := $(BIN_DIR)/server
-SRC := $(wildcard $(SRC_DIR)/*.c)
-OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+EXE := $(BIN_DIR)/libapi.so
+SRC := $(wildcard ./$(SRC_DIR)/*.c)
+OBJ := $(SRC:./$(SRC_DIR)/%.c=./$(OBJ_DIR)/%.o)
+
+LDFLAGS += -shared
 
 .PHONY: all clean
 
@@ -10,7 +12,7 @@ $(EXE): $(OBJ) | $(BIN_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -o $@ $^ $(LDFLAGS) $(LIBS)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -fPIC $(INCLUDES) $(OPTFLAGS) -c -o $@ $<
 
 clean:
 	rm -rf $(BIN_DIR) $(OBJ_DIR)

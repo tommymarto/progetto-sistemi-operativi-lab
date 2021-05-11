@@ -6,6 +6,7 @@
 #include <string.h>
 #include <args.h>
 #include <data-structures.h>
+#include <api.h>
 
 extern bool helpFlag;
 extern bool logFlag;
@@ -24,7 +25,10 @@ int main(int argc, char *argv[]) {
         printf("socketpath is null\n");
     }
 
+
+    openFile(NULL, 3);
     
+
     if(socketFileName != NULL) {
         socketFileName->free(socketFileName);
     }

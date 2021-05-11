@@ -46,7 +46,7 @@ void handleMultipleParameters(vector_request* requests, char request_type, char*
     v_args->free(v_args);
 }
 
-void* parseCommandLineArguments(int argc, char *argv[]) {
+void parseCommandLineArguments(int argc, char *argv[]) {
     vector_request* requests = new_vector_request();
 
     int opt;
@@ -64,7 +64,7 @@ void* parseCommandLineArguments(int argc, char *argv[]) {
                     printf("l'opzione '-%c' richiede un argomento\n", optopt);
                 }
                 break;
-            } 
+            }
             case 'h': {
                 log_info_stdout(logFound, 'h');
                 helpFlag = true;

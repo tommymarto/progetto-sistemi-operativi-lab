@@ -2,4 +2,4 @@
 
 #include <data-structures.h>
 
-void* parseCommandLineArguments(int argc, char *argv[]);
+void parseCommandLineArguments(int argc, char *argv[]);
