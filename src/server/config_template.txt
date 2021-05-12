@@ -8,10 +8,10 @@ MAX_MEMORY_SIZE_MB=${MAX_MEMORY_SIZE_MB}
 MAX_FILES=${MAX_FILES}
 
 # the name of the file used by the socket
-SOCKET_FILEPATH="${SOCKET_FILEPATH}"
+SOCKET_FILEPATH=${SOCKET_FILEPATH}
 
 # available policies: FIFO, LRU
-CACHE_POLICY="${CACHE_POLICY}"
+CACHE_POLICY=${CACHE_POLICY}
 
 # available levels: 0 = no log, 1 = log essential, 2 = log everything
 LOG_VERBOSITY=${LOG_VERBOSITY}

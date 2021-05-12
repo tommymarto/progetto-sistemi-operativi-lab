@@ -20,8 +20,11 @@ extern char* optarg;
 extern int optind, opterr, optopt;
 
 /*
-    multiple arguments are space separated without any whitespace in between
+    multiple arguments are comma-separated without any whitespace in between
 
+    -h
+    -p
+    -f filename
     -w dirname[,n=0]
     -W file1[,file2]
     -d dirname

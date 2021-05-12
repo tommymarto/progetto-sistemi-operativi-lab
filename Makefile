@@ -39,10 +39,19 @@ $(BIN_DIR_PROJECTS):
 	mkdir -p $@
 
 test1:
+	$(MAKE) all
+	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
+	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
 	echo "test1"
 
 test2:
+	$(MAKE) all
+	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
+	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
 	echo "test2"
 
 test3:
+	$(MAKE) all
+	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
+	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
 	echo "test3"
