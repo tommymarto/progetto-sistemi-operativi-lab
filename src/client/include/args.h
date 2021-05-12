@@ -2,4 +2,4 @@
 
 #include <data-structures.h>
 
-void parseCommandLineArguments(int argc, char *argv[]);
+vector_request* parseCommandLineArguments(int argc, char *argv[]);

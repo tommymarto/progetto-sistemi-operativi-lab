@@ -1,56 +1,65 @@
-#define _POSIX_C_SOURCE 200112L
-
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <args.h>
 #include <data-structures.h>
+#include <logging.h>
 #include <api.h>
 
-extern bool helpFlag;
-extern bool logFlag;
+const char* helpString = "\nclient manual:                                  \n\
+    *multiple arguments are space separated without any whitespace in between*  \n\
+                                                                                \n\
+    -w dirname[,n=0]                                                            \n\
+    -W file1[,file2]                                                            \n\
+    -d dirname                                                                  \n\
+    -D dirname                                                                  \n\
+    -r file1[,file2]                                                            \n\
+    -R [n=0]                                                                    \n\
+    -t time                                                                     \n\
+    -l file1[,file2]                                                            \n\
+    -u file1[,file2]                                                            \n\
+    -c file1[,file2]                                                            \n\
+\n";
+
+extern bool hFlag;
+extern bool pFlag;
 extern string* socketFileName;
 
+extern int logging_level;
+
 int main(int argc, char *argv[]) {
+    logging_level |= INFO;
+    vector_request* requests = parseCommandLineArguments(argc, argv);
 
-    // vector_string args[10];
-    // for(int i=0; i<10; i++) args[i] = *new_vector_string();
-
-    parseCommandLineArguments(argc, argv);
-
-    if(socketFileName != NULL) {
-        printf("%s\n", socketFileName->content);
+    if(hFlag) {
+        // handle hFlag termination
+        log_info(stdout, "found help flag. Printing manual and terminating...");
+        printf("%s", helpString); 
     } else {
-        printf("socketpath is null\n");
+
+        // real main
+        if(pFlag) {
+            log_info(stdout, "found log flag. Enabling operation logging...");
+            logging_level |= OPERATION;
+        }
+
+        if(socketFileName != NULL) {
+            printf("socketpath is %s\n", socketFileName->content);
+        } else {
+            printf("socketpath is null\n");
+        }
+
+
+        openFile(NULL, 3);
     }
 
-
-    openFile(NULL, 3);
-    
-
+    // memory cleanup
+    log_info(stdout, "cleanup begin");
     if(socketFileName != NULL) {
         socketFileName->free(socketFileName);
     }
-    
-    // printf("tokenization done\n");
-
-    // for(int i=0; i<args[0].size; i++) {
-    //     printf("%s\n", args[0].array[i].array);
-    // }
-
-    // vector_string* v[10];
-    // for(int i=0; i<10; i++) v[i] = new_vector_string();
-    // for(int i=0; i<50; i++) {
-    //     int j = rand() % 10;
-    //     v[j]->append(v[j], new_string("ciao"));
-    // }
-    // for(int i=0; i<10; i++) v[0]->append(v[0], new_string("ciao"));
-    // for(int i=0; i<10; i++) printf("V[%d], size:%d, cap:%d\n", i, v[i]->size, v[i]->capacity);
-    // for(int i=0; i<10; i++) v[i]->free(v[i]);
-
-    // for(int i=0; i<10; i++) args[i].free(&args[i]);
-
+    requests->free(requests);
+    log_info(stdout, "cleanup done");
+    log_info(stdout, "terminating");
     return 0;
 }
 

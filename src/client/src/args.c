@@ -11,8 +11,8 @@ const char* logFoundWithParams = "found option -%c with parameter %s";
 const char* logFound = "found option -%c";
 
 
-bool helpFlag = false;
-bool logFlag = false;
+bool hFlag = false;
+bool pFlag = false;
 string* socketFileName = NULL;
 
 
@@ -46,7 +46,7 @@ void handleMultipleParameters(vector_request* requests, char request_type, char*
     v_args->free(v_args);
 }
 
-void parseCommandLineArguments(int argc, char *argv[]) {
+vector_request* parseCommandLineArguments(int argc, char *argv[]) {
     vector_request* requests = new_vector_request();
 
     int opt;
@@ -54,29 +54,29 @@ void parseCommandLineArguments(int argc, char *argv[]) {
     {
         switch (opt) {
             case '?': {
-                printf("l'opzione '-%c' non e' gestita\n", optopt);
+                log_error(stdout, "unhandled option: '-%c'\n", optopt);
                 break;
             }
             case ':': {
                 if(optopt == 'R') {
                     handleSingleParameter(requests, opt, "0");
                 } else {
-                    printf("l'opzione '-%c' richiede un argomento\n", optopt);
+                    log_error(stdout, "option '-%c' requires an argument\n", optopt);
                 }
                 break;
             }
             case 'h': {
-                log_info_stdout(logFound, 'h');
-                helpFlag = true;
+                log_info(stdout, logFound, 'h');
+                hFlag = true;
                 break;
             }
             case 'p': {
-                log_info_stdout(logFound, 'p');
-                logFlag = true;
+                log_info(stdout, logFound, 'p');
+                pFlag = true;
                 break;
             }
             case 'f': {
-                log_info_stdout(logFoundWithParams, opt, optarg);
+                log_info(stdout, logFoundWithParams, opt, optarg);
                 socketFileName = new_string(optarg);
                 break;
             }
@@ -86,7 +86,7 @@ void parseCommandLineArguments(int argc, char *argv[]) {
             case 'l':
             case 'u':
             case 'c': {
-                log_info_stdout(logFoundWithParams, opt, optarg);
+                log_info(stdout, logFoundWithParams, opt, optarg);
                 handleMultipleParameters(requests, opt, optarg);
                 break;
             }
@@ -94,7 +94,7 @@ void parseCommandLineArguments(int argc, char *argv[]) {
             case 'D':
             case 'R':
             case 't': {
-                log_info_stdout(logFoundWithParams, opt, optarg);
+                log_info(stdout, logFoundWithParams, opt, optarg);
                 handleSingleParameter(requests, opt, optarg);
                 break;
             }
@@ -103,10 +103,6 @@ void parseCommandLineArguments(int argc, char *argv[]) {
             }
         }
     }
-    
-    for (int i=0; i<requests->size; i++) {
-        printf("request #%d: option:%c, content:%s\n", i, requests->get(requests, i)->option, requests->get(requests, i)->content);
-    }
 
-    requests->free(requests);
+    return requests;
 }
