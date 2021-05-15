@@ -1,10 +1,10 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <mymalloc.h>
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
-
 
 // generic type defaults to int
 #ifndef GENERIC_TYPE
@@ -33,12 +33,11 @@ struct VECTOR_NAME {
 };
 
 static void RESIZE(VECTOR_NAME* self, int new_capacity) {
-    GENERIC_TYPE** new_array = (GENERIC_TYPE**)malloc(new_capacity*sizeof(GENERIC_TYPE*));
-    memcpy(new_array, self->array, self->size*sizeof(GENERIC_TYPE*));
-    for(int i=self->size; i<new_capacity; i++) new_array[i] = NULL;
-    free(self->array);
-    self->array = new_array;
+    self->array = _realloc(self->array, sizeof(GENERIC_TYPE*) * new_capacity);
     self->capacity = new_capacity;
+    for(int i=self->size; i<self->capacity; i++) {
+        self->array[i] = NULL;
+    }
 }
 
 static void RESIZE_IF_NEEDED(VECTOR_NAME* self) {
@@ -64,7 +63,7 @@ static void GENERATE_NAME(_default_item_destructor_, VECTOR_NAME)(GENERIC_TYPE* 
 
 static void GENERATE_NAME(free_, VECTOR_NAME)(VECTOR_NAME* self) {
     for (int i=0; i<self->size; i++) {
-        if(self->array[i] != NULL) {
+        if(self->array[i]) {    // ignore the case when array[i] is null 'cause free(NULL) is a no-op
             self->idem_destructor(self->array[i]);
         }
     }
@@ -98,10 +97,10 @@ static void GENERATE_NAME(append_, VECTOR_NAME)(VECTOR_NAME* self, GENERIC_TYPE*
 }
 
 static VECTOR_NAME* GENERATE_NAME(new_, VECTOR_NAME)() {
-    VECTOR_NAME* new_vector = (VECTOR_NAME*)malloc(sizeof(VECTOR_NAME));
+    VECTOR_NAME* new_vector = _malloc(sizeof(VECTOR_NAME));
     new_vector->size = 0;
     new_vector->capacity = 10;
-    new_vector->array = (GENERIC_TYPE**)malloc(10*sizeof(GENERIC_TYPE*));
+    new_vector->array = _malloc(sizeof(GENERIC_TYPE*) * new_vector->capacity);
     for(int i=0; i<new_vector->capacity; i++) new_vector->array[i] = NULL;
 
     new_vector->append = GENERATE_NAME(append_, VECTOR_NAME);

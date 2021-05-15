@@ -1,9 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <args.h>
 #include <data-structures.h>
 #include <logging.h>
+#include <args.h>
 #include <api.h>
+#include <time.h>
 
 const char* helpString = "\nclient manual:\n\
     *multiple arguments are comma-separated without any whitespace in between*  \n\
@@ -61,45 +60,88 @@ const char* helpString = "\nclient manual:\n\
         Examples: -c myfile1,myfile2   -c myfile                                \n\
 \n";
 
-extern bool hFlag;
-extern bool pFlag;
-extern string* socketFileName;
+// flags from command line args
+#define DEFAULT_SOCKET_FILENAME "fileStorageSocket.sk"
+string* socketFileName;
+bool hFlag;
+bool pFlag;
 
+// for logging verbosity
 extern int logging_level;
 
+// for api op info
+extern api_info lastApiCall;
+#define logApiString "operation: %s, state: %s, file: %s, bytesRead: %d, bytesWritten: %d, duration: %.6f"
+#define log_last_api_call() log_operation(logApiString, lastApiCall.opName, lastApiCall.opStatus, lastApiCall.file, lastApiCall.bytesRead, lastApiCall.bytesWritten, (double)lastApiCall.duration / 1000)
+
+void flushAll() {
+    fflush(NULL);
+}
+
 int main(int argc, char *argv[]) {
+    // some setup
+    atexit(flushAll);
     logging_level |= INFO;
+
     vector_request* requests = parseCommandLineArguments(argc, argv);
 
     if(hFlag) {
         // handle hFlag termination
-        log_info(stdout, "found help flag. Printing manual and terminating...");
+        log_info("found help flag. Printing manual and terminating...");
         printf("%s", helpString); 
     } else {
 
         // real main
         if(pFlag) {
-            log_info(stdout, "found log flag. Enabling operation logging...");
-            logging_level |= OPERATION;
+            log_info("found log flag. Enabling operation logging...");
+            logging_level |= OPERATION | MESSAGE;
+        }
+        if(socketFileName == NULL) {
+            log_info("option f not found. Using default socket filename...");
+            socketFileName = new_string(DEFAULT_SOCKET_FILENAME);
         }
 
-        if(socketFileName != NULL) {
-            printf("socketpath is %s\n", socketFileName->content);
-        } else {
-            printf("socketpath is null\n");
+        // char s[N+2]
+        // FILE* ifp - fopen("inputfile", "r");
+        //while((fgets(s,N+2,ifp))!=NULL)
+        // fread(), fwrite()
+        // fclose(ifp);
+
+        log_info("fixing requests format and checking for -d and -D bad usage...");
+        expandRequests(requests);
+        
+        
+        log_info("connecting on socket: %s", socketFileName->content);
+
+        // set timeout 5 seconds from now
+        struct timespec timeout;
+        timespec_get(&timeout, TIME_UTC);
+        timeout.tv_sec += 5;
+
+        if(openConnection(socketFileName->content, 10, timeout) == -1) {
+            log_last_api_call();
+            log_fatal("unable to create socket");
+            log_fatal("exiting the program...");
+            exit(EXIT_FAILURE);
         }
+        log_last_api_call();
 
+        log_info("sending stuff");
+        openFile("some random stuff", 3);
 
-        openFile(NULL, 3);
+        if(closeConnection(socketFileName->content) == -1) {
+            log_fatal("error during socket close");
+            log_fatal("exiting the program...");
+        }
     }
 
     // memory cleanup
-    log_info(stdout, "cleanup begin");
+    log_info("cleanup begin");
     if(socketFileName != NULL) {
         socketFileName->free(socketFileName);
     }
     requests->free(requests);
-    log_info(stdout, "cleanup done");
-    log_info(stdout, "terminating");
+    log_info("cleanup done");
+    log_info("terminating");
     return 0;
 }

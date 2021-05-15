@@ -1,7 +1,7 @@
 EXE := $(BIN_DIR)/libcommon.so
 SRC := $(wildcard ./$(SRC_DIR)/*.c)
 OBJ := $(SRC:./$(SRC_DIR)/%.c=./$(OBJ_DIR)/%.o)
-
+LIBS += -lpthread
 LDFLAGS += -shared
 
 .PHONY: all clean

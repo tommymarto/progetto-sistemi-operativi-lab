@@ -1,4 +1,6 @@
 #include <mystring.h>
+
+#include <mymalloc.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -8,10 +10,10 @@ void free_string(string* self) {
 }
 
 string* new_string(char* content) {
-    string* new_string = (string*)malloc(sizeof(string));
+    string* new_string = _malloc(sizeof(string));
     int content_len = strlen(content);
     new_string->size = content_len + 1;
-    new_string->content = (char*)malloc(new_string->size*sizeof(char));
+    new_string->content = _malloc(sizeof(char) * new_string->size);
     strncpy(new_string->content, content, content_len);
     new_string->content[new_string->size - 1] = '\0';
 

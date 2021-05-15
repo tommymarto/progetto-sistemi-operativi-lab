@@ -10,6 +10,9 @@ MAX_FILES=${MAX_FILES}
 # the name of the file used by the socket
 SOCKET_FILEPATH=${SOCKET_FILEPATH}
 
+# max number of connections. 0 means the maximum possible
+MAX_CLIENTS=${MAX_CLIENTS}
+
 # available policies: FIFO, LRU
 CACHE_POLICY=${CACHE_POLICY}
 

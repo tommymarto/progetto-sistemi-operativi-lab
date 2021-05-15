@@ -1,6 +1,7 @@
 EXE := $(BIN_DIR)/server
 SRC := $(wildcard $(SRC_DIR)/*.c)
 OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+LIBS += -lpthread
 
 .PHONY: all clean test1 test2 test3
 

@@ -4,7 +4,8 @@
 N_THREAD_WORKERS=4
 MAX_MEMORY_SIZE_MB=128
 MAX_FILES=1000
-SOCKET_FILEPATH=/tmp/fileStorageSocket.sk
+SOCKET_FILEPATH=fileStorageSocket.sk
+MAX_CLIENTS=100
 CACHE_POLICY=FIFO
 LOG_VERBOSITY=2
 
@@ -33,6 +34,11 @@ case $key in
     shift # past argument
     shift # past value
     ;;
+    --max-clients)
+    MAX_CLIENTS="$2"
+    shift # past argument
+    shift # past value
+    ;;
     --cache-policy)
     CACHE_POLICY="$2"
     shift # past argument
@@ -54,6 +60,7 @@ export N_THREAD_WORKERS
 export MAX_MEMORY_SIZE_MB
 export MAX_FILES
 export SOCKET_FILEPATH
+export MAX_CLIENTS
 export CACHE_POLICY
 export LOG_VERBOSITY
 
