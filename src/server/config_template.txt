@@ -7,6 +7,9 @@ MAX_MEMORY_SIZE_MB=${MAX_MEMORY_SIZE_MB}
 # max number of files
 MAX_FILES=${MAX_FILES}
 
+# max size of a single file
+MAX_FILE_SIZE=${MAX_FILE_SIZE}
+
 # the name of the file used by the socket
 SOCKET_FILEPATH=${SOCKET_FILEPATH}
 

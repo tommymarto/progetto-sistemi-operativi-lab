@@ -4,6 +4,7 @@
 N_THREAD_WORKERS=4
 MAX_MEMORY_SIZE_MB=128
 MAX_FILES=1000
+MAX_FILE_SIZE=$((1<<20))
 SOCKET_FILEPATH=fileStorageSocket.sk
 MAX_CLIENTS=100
 CACHE_POLICY=FIFO
@@ -26,6 +27,11 @@ case $key in
     ;;
     --max-files)
     MAX_FILES="$2"
+    shift # past argument
+    shift # past value
+    ;;
+    --max-file-size)
+    MAX_FILE_SIZE="$2"
     shift # past argument
     shift # past value
     ;;
@@ -59,6 +65,7 @@ done
 export N_THREAD_WORKERS
 export MAX_MEMORY_SIZE_MB
 export MAX_FILES
+export MAX_FILE_SIZE
 export SOCKET_FILEPATH
 export MAX_CLIENTS
 export CACHE_POLICY

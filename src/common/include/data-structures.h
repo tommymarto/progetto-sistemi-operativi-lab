@@ -14,8 +14,3 @@
 #define GENERIC_TYPE string
 #define CUSTOM_TYPE_DESTRUCTOR free_string
 #include <vector.h>
-
-// vector_request with custom deallocator
-#define GENERIC_TYPE request
-#define CUSTOM_TYPE_DESTRUCTOR free_request
-#include <vector.h>

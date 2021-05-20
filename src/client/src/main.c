@@ -1,8 +1,10 @@
-#include <data-structures.h>
+#include <client-data-structures.h>
 #include <logging.h>
 #include <args.h>
 #include <api.h>
 #include <time.h>
+// required nanosleep declaration
+int nanosleep(const struct timespec *req, struct timespec *rem);
 
 const char* helpString = "\nclient manual:\n\
     *multiple arguments are comma-separated without any whitespace in between*  \n\
@@ -65,6 +67,7 @@ const char* helpString = "\nclient manual:\n\
 string* socketFileName;
 bool hFlag;
 bool pFlag;
+int tFlag = 0;
 
 // for logging verbosity
 extern int logging_level;
@@ -100,6 +103,8 @@ int main(int argc, char *argv[]) {
             log_info("option f not found. Using default socket filename...");
             socketFileName = new_string(DEFAULT_SOCKET_FILENAME);
         }
+        // setting sleep time between requests
+        struct timespec sleepTime = { .tv_sec = tFlag / 1000, .tv_nsec = tFlag * 1000000};
 
         // char s[N+2]
         // FILE* ifp - fopen("inputfile", "r");
@@ -128,6 +133,8 @@ int main(int argc, char *argv[]) {
 
         log_info("sending stuff");
         openFile("some random stuff", 3);
+        
+        nanosleep(&sleepTime, NULL);
 
         if(closeConnection(socketFileName->content) == -1) {
             log_fatal("error during socket close");

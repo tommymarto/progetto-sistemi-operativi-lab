@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200112L
 #include <args.h>
 #include <unistd.h>
-#include <data-structures.h>
+#include <client-data-structures.h>
 #include <stringutils.h>
 #include <logging.h>
 
