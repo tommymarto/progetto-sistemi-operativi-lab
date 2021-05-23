@@ -4,9 +4,13 @@
 #include <time.h>
 
 #define FILE_LEN 256
+
+enum OPEN_MODES { O_CREATE = 1, O_LOCK = 1<<1 };
+
 typedef struct {
     char* opName;
     char* opStatus;
+    int errorCode;
     char file[FILE_LEN];
     int bytesRead;
     int bytesWritten;
@@ -15,6 +19,7 @@ typedef struct {
 
 int openConnection(const char* sockname, int msec, const struct timespec abstime);
 int closeConnection(const char* sockname);
+
 // request kind: 'o'
 int openFile(const char* pathname, int flags);
 // request kind: 'r'

@@ -2,10 +2,12 @@
 #include <logging.h>
 #include <args.h>
 #include <configuration.h>
+#include <comunication.h>
 #include <worker.h>
 #include <request.h>
 #include <requestqueue.h>
 #include <mymalloc.h>
+#include <files.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -56,6 +58,43 @@ void updateMaxFds(int* maxFds) {
     while(fstat(*maxFds, &statbuf) == -1) {
         *maxFds = *maxFds - 1;
     }
+}
+
+// returns -2 if read less then expected, -1 if errors, 0 if client disconnected or the number of bytes read
+int readMessage(int fd, char** msgBuf, int* bufLen) {
+    int bytesRead, totalBytesRead = 0;
+
+    *msgBuf = NULL;
+
+    // read size of payload
+    char headerBuf[4];
+    int msgSize;
+    bytesRead = readn_unless_condition(fd, headerBuf, sizeof(int), (bool*)&mainExit);
+
+    if(bytesRead == -1 || bytesRead == 0) {
+        return bytesRead;
+    } else if(bytesRead < sizeof(int)) {
+        return -2;
+    }
+    totalBytesRead += sizeof(int);
+    msgSize = deserializeInt(headerBuf);
+    log_info("found message length: %d", msgSize);
+
+    *bufLen = msgSize;
+
+    // read actual payload
+    log_info("reading actual payload...");
+    *msgBuf = _malloc(sizeof(char) * (msgSize + 1));
+    bytesRead = readn_unless_condition(fd, *msgBuf, sizeof(char) * msgSize, (bool*)&mainExit);
+    if(bytesRead == -1 || bytesRead == 0) {
+        return bytesRead;
+    } else if(bytesRead < msgSize) {
+        return -2;
+    }
+    totalBytesRead += bytesRead;
+    (*msgBuf)[msgSize] = '\0';
+
+    return totalBytesRead;
 }
 
 void cleanup() {
@@ -175,10 +214,17 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // setup request queue
+    // setup resources
     init_request_queue(&requestQueue);
+    init_filesystem();
 
     // spawn workers
+    pthread_t notifier;
+    if(pthread_create(&notifier, NULL, worker_notify, NULL) != 0) {
+        log_fatal("unable to start the worker notifier");
+        log_fatal("exiting the program...");
+        exit(EXIT_FAILURE);
+    }
     pthread_t workers[configs.nThreadWorkers];
     for(int i=0; i<configs.nThreadWorkers; i++) {
         int* threadId = _malloc(sizeof(int));
@@ -245,7 +291,7 @@ int main(int argc, char *argv[]) {
         failedAttempts = 0;
 
         // handle select success
-        for(int fd = 0; fd <= _maxFds; fd++) {
+        for(int fd = 0; fd <= _maxFds && !mainExit; fd++) {
             if(FD_ISSET(fd, &rdset)) {
                 if(fd == sockfd) {
                     int conn = accept(sockfd, NULL, 0);
@@ -259,61 +305,31 @@ int main(int argc, char *argv[]) {
                     FD_SET(conn, &set);
                     _maxFds = MAX(_maxFds, conn);
                 } else {
-                    // read size of payload
-                    int bytesRead, msgSize;
-                    bytesRead = read(fd, &msgSize, sizeof(int));
-                    if(bytesRead == -1) {
-                        log_error("failed read from client %d", fd);
-                        continue;
-                    } else if(bytesRead == 0) {
-                        // client has disconnected
-                        FD_CLR(fd, &set);
-                        updateMaxFds(&_maxFds);
-                        close(fd);
-                        log_info("connection with client %d closed", fd);
-                        continue;
-                    } else if(bytesRead != sizeof(int)) {
-                        log_error("incorrect header length, ignoring request from client %d...", fd);
-                        continue;
-                    }
-                    log_info("found message length: %d", msgSize);
-                    
-                    if(msgSize > configs.maxFileSize) {
-                        log_error("client trying to send a file which size is greater than the maximum allowed, closing connection...");
-                        // client has disconnected
-                        FD_CLR(fd, &set);
-                        updateMaxFds(&_maxFds);
-                        close(fd);
-                        log_info("connection with client %d closed", fd);
-                        clear_session(sessions + fd);
-                        log_info("session cleared");
-                        continue;
-                    }
-
-                    // read actual payload
-                    log_info("reading actual payload...");
-                    char* msgBuf = _malloc(sizeof(char) * (msgSize + 1));
-                    bytesRead = read(fd, msgBuf, sizeof(char) * msgSize);
-                    if(bytesRead == -1) {
-                        log_error("failed read from client %d", fd);
-                        continue;
-                    } else if(bytesRead == 0) {
-                        // client has disconnected
-                        FD_CLR(fd, &set);
-                        updateMaxFds(&_maxFds);
-                        close(fd);
-                        log_info("connection with client %d closed", fd);
-                        clear_session(sessions + fd);
-                        log_info("session cleared");
-                        continue;
-                    } else if(bytesRead != msgSize) {
-                        log_error("incorrect payload length, ignoring request from client %d...", fd);
+                    char* msgBuf;
+                    int bufLen;
+                    int bytesRead = readMessage(fd, &msgBuf, &bufLen);
+                    if(bytesRead == -2) {
+                        // this should only happen when readn is interrupted by a signal so the condition (mainExit) is set
+                        log_info("read less then expected bytes, dropping message");
                         free(msgBuf);
                         continue;
+                    } if(bytesRead == -1) {
+                        log_error("failed read from client %d", fd);
+                        free(msgBuf);
+                        continue;
+                    } else if (bytesRead == 0) {
+                        free(msgBuf);
+                        // client has disconnected
+                        FD_CLR(fd, &set);
+                        updateMaxFds(&_maxFds);
+                        close(fd);
+                        log_info("connection with client %d closed", fd);
+                        clear_session(sessions + fd);
+                        log_info("session cleared");
+                        continue;
                     }
-                    msgBuf[msgSize] = '\0';
-                    request* r = new_request(msgBuf, msgSize, sessions + fd);
-                    log_info("received message of kind '%c' with content length %d. Flags: %d", r->kind, r->contentLen, r->flags);
+                    request* r = new_request(msgBuf, bufLen, sessions + fd);
+                    log_info("received message of kind '%c' with content length %d. Flags: %d", r->kind, r->file->length, r->flags);
                     insert_request_queue(&requestQueue, r);
                 }
             }
@@ -323,16 +339,23 @@ int main(int argc, char *argv[]) {
     // cleanup
     log_info("cleanup begin");
     log_info("closing queue");
-    close_request_queue(&requestQueue);
     if(!threadExit) {
         wait_queue_empty(&requestQueue);
         threadExit = true;
     }
+    close_request_queue(&requestQueue);
+    close_filesystem_pending_locks();
     log_info("waiting for workers to finish");
     for(int i=0; i<configs.nThreadWorkers; i++) {
         pthread_join(workers[i], NULL);
     }
-    // i should clean the queue
+    pthread_join(notifier, NULL);
+    log_info("all workers finished");
+    free_queue(&requestQueue);
+    free_filesystem();
+    for(int i=0; i<DEFAULT_MAX_CLIENTS; i++) {
+        clear_session(sessions + i);
+    }
     log_info("thread join done");
     return 0;
 }

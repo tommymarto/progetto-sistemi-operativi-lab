@@ -1,39 +1,58 @@
 #include <request.h>
 
 #include <mymalloc.h>
-
-void serializeInt(char* dest, int content) {
-    dest[3] = (content >> 24) & 0xff;
-    dest[2] = (content >> 16) & 0xff;
-    dest[1] = (content >> 8) & 0xff;
-    dest[0] = content & 0xff;
-}
-
-int deserializeInt(char* src) {
-    return (src[3] << 24) | (src[2] << 16) | (src[1] << 8) | src[0];
-}
-
+#include <comunication.h>
 
 void free_request(request* self) {
-    free(self->content);
+    free(self->file->buf);
+    free(self->file);
     free(self);
 }
 
-char* get_content_request(request* r) {
-    return r->content + 1;
+void free_request_keep_file(request* self) {
+    free(self);
 }
 
 request* new_request(char* content, int contentLen, session* client) {
+    char* msg = content;
+
     request* r = _malloc(sizeof(request));
+
+    // deserialize kind
     r->kind = content[0];
-    r->contentLen = contentLen;
-    r->content = content;
-    r->flags = deserializeInt(content + contentLen - 4);
-    r->content[contentLen - 4] = '\0';
     r->client = client;
+    msg += 1;
+
+    // fill file
+    fileEntry* f = _malloc(sizeof(fileEntry));
+    f->buf = content;
+    f->owner = -1;
+
+    // deserialize path
+    f->pathlen = deserializeInt(msg);
+    msg += sizeof(int);
+    f->pathname = msg;
+    msg += f->pathlen;
+    msg[0] = '\0';
+    msg += 1;
+
+    // deserialize content
+    f->length = deserializeInt(msg);
+    msg += sizeof(int);
+    f->content = msg;
+    msg += f->length;
+    
+    // deserialize flags
+    r->flags = deserializeInt(msg);
+    
+    // fix content string
+    content[contentLen - 4] = '\0';
+
+    // associate file-request
+    r->file = f;
     
     r->free = free_request;
-    r->getContent = get_content_request;
+    r->free_keep_file = free_request_keep_file;
 
     return r;
 }

@@ -65,6 +65,19 @@ void wait_queue_empty(request_queue* queue) {
     pthread_mutex_unlock(&queue->lock);
 }
 
+void free_queue(request_queue* queue) {
+    pthread_mutex_lock(&queue->lock);
+    
+    // clean queue if there are values left
+    while(queue->tail != queue->head) {
+        request* r = queue->items[queue->head];
+        r->free(r);
+        queue->head++;
+    }
+
+    pthread_mutex_unlock(&queue->lock);
+}
+
 void close_request_queue(request_queue* queue) {
     pthread_mutex_lock(&queue->lock);
 

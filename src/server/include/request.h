@@ -1,22 +1,23 @@
 #pragma once
 
 #include <session.h>
+#include <files.h>
+
+// forward declaration
+typedef struct fileEntry fileEntry;
+struct fileEntry;
 
 typedef struct request request;
-
 struct request {
     char kind;
-    int contentLen;
-    char* content;
     unsigned int flags;
     session* client;
 
+    fileEntry* file;
+
     void (*free)(request* self);
-    char* (*getContent)(request* r);
+    void (*free_keep_file)(request* self);
 };
 
 request* new_request(char* content, int contentLen, session* client);
 void free_request(request* self);
-
-void serializeInt(char* dest, int content);
-int deserializeInt(char* src);
