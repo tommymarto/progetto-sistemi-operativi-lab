@@ -3,9 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <logging.h>
+
 int isFileOpened(session* self, char* pathname) {
     for(int i=0; i<MAX_OPENED_FILES; i++) {
-        if(self->openedFiles != NULL && strcmp(self->openedFiles[i], pathname) == 0) {
+        if(self->openedFiles[i] != NULL && strcmp(self->openedFiles[i], pathname) == 0) {
             return i;
         } 
     }
@@ -15,6 +17,12 @@ int isFileOpened(session* self, char* pathname) {
 void init_session(session* s, int clientFd) {
     s->clientFd = clientFd;
     s->isActive = true;
+    s->opStatus = false;
+
+    for(int i=0; i<MAX_OPENED_FILES; i++) {
+        s->openedFiles[i] = NULL;
+        s->canWriteOnFile[i] = false;
+    }
 
     s->isFileOpened = isFileOpened;
 }
@@ -24,7 +32,7 @@ void clear_session(session* s) {
     for(int i=0; i<MAX_OPENED_FILES; i++) {
         free(s->openedFiles[i]);
         s->openedFiles[i] = NULL;
-        s->openedFileFlags[i] = 0;
+        s->canWriteOnFile[i] = false;
     }
 }
 

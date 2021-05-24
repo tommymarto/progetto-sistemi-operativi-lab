@@ -4,15 +4,15 @@
 #include <request.h>
 
 // request kind: 'o'
-fileEntry** openFile(request* r, int* result, char* pathname, int flags);
+fileEntry** openFile(request* r, int* result, int* dim, char* pathname, int flags);
 // request kind: 'r'
-fileEntry** readFile(request* r, int* result, char* pathname);
+fileEntry** readFile(request* r, int* result, int* dim, char* pathname);
 // request kind: 'n'
-fileEntry** readNFiles(request* r, int* result, int N);
+fileEntry** readNFiles(request* r, int* result, int* dim, int N);
 // request kind: 'w'
-fileEntry** writeFile(request* r, int* result, char* pathname, char* content, int size);
+fileEntry** writeFile(request* r, int* result, int* dim, fileEntry* file);
 // request kind: 'a'
-fileEntry** appendToFile(request* r, int* result, char* pathname, char* content, int size);
+fileEntry** appendToFile(request* r, int* result, int* dim, char* pathname, char* content, int size);
 // request kind: 'l'
 int lockFile(request* r, char* pathname);
 // request kind: 'u'

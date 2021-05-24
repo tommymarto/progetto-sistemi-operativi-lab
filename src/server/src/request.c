@@ -9,7 +9,8 @@ void free_request(request* self) {
     free(self);
 }
 
-void free_request_keep_file(request* self) {
+void free_request_keep_file_content(request* self) {
+    free(self->file);
     free(self);
 }
 
@@ -17,15 +18,16 @@ request* new_request(char* content, int contentLen, session* client) {
     char* msg = content;
 
     request* r = _malloc(sizeof(request));
+    r->client = client;
 
     // deserialize kind
     r->kind = content[0];
-    r->client = client;
     msg += 1;
 
     // fill file
     fileEntry* f = _malloc(sizeof(fileEntry));
     f->buf = content;
+    f->bufLen = contentLen;
     f->owner = -1;
 
     // deserialize path
@@ -52,7 +54,7 @@ request* new_request(char* content, int contentLen, session* client) {
     r->file = f;
     
     r->free = free_request;
-    r->free_keep_file = free_request_keep_file;
+    r->free_keep_file_content = free_request_keep_file_content;
 
     return r;
 }

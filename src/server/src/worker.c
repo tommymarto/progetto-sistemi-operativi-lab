@@ -24,7 +24,7 @@ int writeMessage(int n, char** content, int* sizes, int fd) {
     }
     size_t msgLen = headerLen + payloadLen;
     char* msg = _malloc(msgLen);
-    
+
     // response error message trick
     if(n < 0) {
         payloadLen = n;
@@ -54,6 +54,27 @@ int writeMessage(int n, char** content, int* sizes, int fd) {
     return bytesWritten;
 }
 
+int writeFileArray(int dim, fileEntry* files[], int clientFd) {
+    char** strings = _malloc(sizeof(char*) * 2 * dim);
+    int* sizes = _malloc(sizeof(int) * 2 * dim);
+    for(int i=0; i<dim; i++) {
+        int j = 2*i;
+
+        strings[j] = files[i]->pathname;
+        sizes[j] = files[i]->pathlen;
+
+        strings[j+1] = files[i]->content;
+        sizes[j+1] = files[i]->length;
+    }
+    
+    int result = writeMessage(2 * dim, strings, sizes, clientFd);
+
+    free(strings);
+    free(sizes);
+
+    return result;
+}
+
 void* worker_start(void* arg) {
     int* threadId = (int*)arg;
 
@@ -65,21 +86,30 @@ void* worker_start(void* arg) {
         }
         log_info("request '%c', served by worker %d", r->kind, *threadId);
 
-        fileEntry** files;
-        int result;
+        fileEntry** files = NULL;
+        int result, dim = 0;
 
         switch (r->kind) {
             case 'o': {
-                files = openFile(r, &result, r->file->pathname, r->flags);
+                files = openFile(r, &result, &dim, r->file->pathname, r->flags);
                 break;
             }
-            case 'r':
+            case 'r': {
+                files = readFile(r, &result, &dim, r->file->pathname);
+                break;
+            }
             case 'n':
-            case 'w':
+            case 'w': {
+                files = writeFile(r, &result, &dim, r->file);
+                break;
+            }
             case 'a':
             case 'l':
             case 'u':
-            case 'c':
+            case 'c': {
+                result = closeFile(r, r->file->pathname);
+                break;
+            }
             case 'R':
             default: {
                 log_error("unhandled request type '%c', dropping request", r->kind);
@@ -88,26 +118,38 @@ void* worker_start(void* arg) {
             }
         }
 
-        if(result <= 0) {
-            // return error/ping for result
-            writeMessage(result, NULL, NULL, r->client->clientFd);
+        // ignore result == 0 because it will be handled by the notifier
+        if(result < 0) {
+            // return error
+            pingKo(r->client->clientFd);
             r->free(r);
-            continue;
+        } else if(result == 1) {
+            pingOk(r->client->clientFd);
+            r->free(r);
+        } else if(result == 2 || result == 3) {
+            if(dim > 0) {
+                writeFileArray(dim, files, r->client->clientFd);
+            } else {
+                pingOk(r->client->clientFd);
+            }
+
+            if(result == 2) {
+                r->free_keep_file_content(r);
+            } else if(result == 3) {
+                r->free(r);
+            }
         }
 
-        char** strings = _malloc(sizeof(char*) * 2 * result);
-        int* sizes = _malloc(sizeof(int) * 2 * result);
-        for(int i=0; i<result; i+=2) {
-            strings[i] = files[i]->pathname;
-            sizes[i] = files[i]->pathlen;
-
-            strings[i+1] = files[i]->content;
-            sizes[i+1] = files[i]->length;
+        if(files != NULL) {
+            for(int i=0; i<dim; i++) {
+                if(files[i] != NULL) {
+                    free(files[i]->buf);
+                }
+                free(files[i]);
+            }
         }
-        
-        writeMessage(result, strings, sizes, r->client->clientFd);
+        free(files);
 
-        r->free_keep_file(r);
     }
 
     free(threadId);
@@ -127,12 +169,11 @@ void* worker_notify(void* arg) {
         bool status = r->client->opStatus;
         if(status) {
             pingOk(r->client->clientFd);
-            r->free_keep_file(r);
+            r->free_keep_file_content(r);
         } else {
             pingKo(r->client->clientFd);
             r->free(r);
         }
-
     }
 
     return NULL;

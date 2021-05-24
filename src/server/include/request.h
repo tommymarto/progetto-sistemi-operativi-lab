@@ -16,7 +16,7 @@ struct request {
     fileEntry* file;
 
     void (*free)(request* self);
-    void (*free_keep_file)(request* self);
+    void (*free_keep_file_content)(request* self);
 };
 
 request* new_request(char* content, int contentLen, session* client);

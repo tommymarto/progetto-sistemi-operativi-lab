@@ -1,7 +1,11 @@
+#define _GNU_SOURCE
+
 #include <client-data-structures.h>
 #include <logging.h>
 #include <args.h>
 #include <api.h>
+#include <dirent.h>
+#include <limits.h>
 #include <time.h>
 // required nanosleep declaration
 int nanosleep(const struct timespec *req, struct timespec *rem);
@@ -62,12 +66,19 @@ const char* helpString = "\nclient manual:\n\
         Examples: -c myfile1,myfile2   -c myfile                                \n\
 \n";
 
+#define logAndSkipIfOperationFailed(kind, function)                                                 \
+log_last_api_call();                                                                                \
+if(result == -1) {                                                                                  \
+    log_error("error while processing flag '" kind "': " function " failed. Skipping request...");  \
+    continue;                                                                                       \
+}
+
 // flags from command line args
 #define DEFAULT_SOCKET_FILENAME "fileStorageSocket.sk"
-string* socketFileName;
-bool hFlag;
-bool pFlag;
-int tFlag = 0;
+extern string* socketFileName;
+extern bool hFlag;
+extern bool pFlag;
+extern int tFlag;
 
 // for logging verbosity
 extern int logging_level;
@@ -77,11 +88,47 @@ extern api_info lastApiCall;
 #define logApiString "operation: %s, state: %s, file: %s, bytesRead: %d, bytesWritten: %d, duration: %.6f"
 #define log_last_api_call() log_operation(logApiString, lastApiCall.opName, lastApiCall.opStatus, lastApiCall.file, lastApiCall.bytesRead, lastApiCall.bytesWritten, (double)lastApiCall.duration / 1000)
 
+int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
+    int result = 0; 
+
+    DIR* dir;
+    dir = opendir(dirname);
+    if (dir == NULL) {
+        return -1;
+    }
+
+    struct dirent* ent;
+    char path[2048];
+    while((ent = readdir(dir)) != NULL && *remaining > 0) {
+        if(ent->d_type == DT_DIR && ent->d_name[0] != '.') {
+            // visit recursively
+            snprintf(path, sizeof(path), "%s/%s", dirname, ent->d_name);
+            handleSmallWFlag(path, saveDir, remaining);
+        } else if(ent->d_type == DT_REG) {
+            // write file
+            *remaining -= 1;
+
+            snprintf(path, sizeof(path), "%s/%s", dirname, ent->d_name);
+            
+            result = openFile(path, O_CREATE | O_LOCK);
+            logAndSkipIfOperationFailed("w", "openFile");
+            result = writeFile(path, saveDir);
+            logAndSkipIfOperationFailed("w", "writeFile");
+            result = closeFile(path);
+            logAndSkipIfOperationFailed("w", "closeFile");
+        }
+    }
+    closedir(dir);
+
+    return result;
+}
+
 void flushAll() {
     fflush(NULL);
 }
 
 int main(int argc, char *argv[]) {
+
     // some setup
     atexit(flushAll);
     logging_level |= INFO;
@@ -104,17 +151,10 @@ int main(int argc, char *argv[]) {
             socketFileName = new_string(DEFAULT_SOCKET_FILENAME);
         }
         // setting sleep time between requests
-        struct timespec sleepTime = { .tv_sec = tFlag / 1000, .tv_nsec = tFlag * 1000000};
-
-        // char s[N+2]
-        // FILE* ifp - fopen("inputfile", "r");
-        //while((fgets(s,N+2,ifp))!=NULL)
-        // fread(), fwrite()
-        // fclose(ifp);
+        struct timespec sleepTime = { .tv_sec = tFlag / 1000, .tv_nsec = ((long)tFlag % 1000) * 1000000};
 
         log_info("fixing requests format and checking for -d and -D bad usage...");
         expandRequests(requests);
-        
         
         log_info("connecting on socket: %s", socketFileName->content);
 
@@ -131,9 +171,106 @@ int main(int argc, char *argv[]) {
         }
         log_last_api_call();
 
-        log_info("sending stuff");
-        openFile("some random stuff", 3);
-        
+        for(int i=0; i<requests->size; i++) {
+            // sleep
+            nanosleep(&sleepTime, NULL);
+
+            request* r = requests->get(requests, i);
+            char type = r->type;
+            
+            int result;
+
+            log_info("processing request '%c'", type);
+
+            switch (type) {
+                case 'w': {
+                    int remaining = r->extra;
+                    if(remaining == 0) {
+                        remaining = INT_MAX;
+                    }
+
+                    int contentSize = strlen(r->content);
+                    if(r->content[contentSize - 1] == '/') {
+                        r->content[contentSize - 1] = '\0';
+                    }
+
+                    handleSmallWFlag(r->content, r->dir, &remaining);
+                    break;
+                }
+                case 'W': {
+                    result = openFile(r->content, O_CREATE | O_LOCK);
+                    logAndSkipIfOperationFailed("W", "openFile");
+                    result = writeFile(r->content, r->dir);
+                    log_last_api_call();
+                    if(result == -1) {
+                        log_error("error while processing flag 'W': writeFile failed. Skipping request...");
+                    }
+                    result = closeFile(r->content);
+                    logAndSkipIfOperationFailed("W", "closeFile");
+                    break;
+                }
+                case 'r': {
+                    size_t bufSize;
+                    char* buf;
+
+
+                    result = openFile(r->content, 0);
+                    logAndSkipIfOperationFailed("r", "openFile");
+                    result = readFile(r->content, (void**)&buf, &bufSize);
+                    log_last_api_call();
+                    if(result == -1) {
+                        log_error("error while processing flag 'r': readFile failed. Skipping request...");
+                    }
+                    if(result != -1) {
+                        log_info("%d - %s", bufSize, buf);
+                    }
+                    free(buf);
+                    result = closeFile(r->content);
+                    logAndSkipIfOperationFailed("r", "closeFile");
+                    break;
+                }
+                case 'R': {
+                    result = readNFiles(r->extra, r->dir);
+                    logAndSkipIfOperationFailed("R", "readNFiles");
+                    break;
+                }
+                case 'l': {
+                    result = openFile(r->content, 0);
+                    logAndSkipIfOperationFailed("l", "openFile");
+                    result = lockFile(r->content);
+                    logAndSkipIfOperationFailed("l", "lockFile");
+                }
+                case 'u': {
+                    result = unlockFile(r->content);
+                    if(result == -1) {
+                        log_error("error while processing flag 'u': unlockFile failed. Skipping request...");
+                    }
+                    result = closeFile(r->content);
+                    logAndSkipIfOperationFailed("u", "closeFile");
+                    break;
+                }
+                case 'c': {
+                    result = openFile(r->content, 0);
+                    logAndSkipIfOperationFailed("c", "openFile");
+                    result = lockFile(r->content);
+                    logAndSkipIfOperationFailed("c", "lockFile");
+                    result = removeFile(r->content);
+                    logAndSkipIfOperationFailed("c", "removeFile");
+                    break;
+                }
+                case 'd':
+                case 'D': {
+                    log_info("request '%c' already handled", type);
+                    break;
+                }
+                default: {
+                    log_error("unhandled request type '%c'", type);
+                    break;
+                }
+            }
+        }
+
+        // sleep
         nanosleep(&sleepTime, NULL);
 
         if(closeConnection(socketFileName->content) == -1) {

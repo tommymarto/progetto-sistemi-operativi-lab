@@ -10,6 +10,8 @@
 #include <sys/un.h>
 #include <string.h>
 #include <sys/time.h>
+// required nanosleep declaration
+int nanosleep(const struct timespec *req, struct timespec *rem);
 
 #define UNIX_PATH_MAX 108
 
@@ -24,9 +26,75 @@ static void setLastApiCall(char* opName, char* opStatus, const char* file, int b
     lastApiCall.opStatus = opStatus;
     lastApiCall.errorCode = serverResponseError;
     strncpy(lastApiCall.file, file, FILE_LEN);
-    lastApiCall.bytesRead = 0;
-    lastApiCall.bytesWritten = 0;
+    lastApiCall.bytesRead = bytesRead;
+    lastApiCall.bytesWritten = bytesWritten;
     lastApiCall.duration = (t_end.tv_sec - t_start.tv_sec) * 1000000 + t_end.tv_usec - t_start.tv_usec;
+}
+
+static bool compareTimes(struct timespec t1, struct timespec t2) {
+    if(t1.tv_sec < t2.tv_sec) {
+        return true;
+    } else if (t1.tv_sec == t2.tv_sec && t1.tv_nsec <= t2.tv_nsec) {
+        return true;
+    }
+    return false;
+}
+
+static int fixFileName(char* filename, int len) {
+    for(int i=0; i<len; i++) {
+        if(filename[i] == '/' || filename[i] == '.') {
+            filename[i] = '_';
+        }
+    }
+    return len+1;
+}
+
+static int readFromFile(const char* pathname, char** buf) {
+    *buf = NULL;
+
+    long fileSize;
+    FILE* f = fopen(pathname, "r");
+    if(f == NULL) {
+        return -1;
+    }
+    fseek(f, 0L, SEEK_END);
+    fileSize = ftell(f);
+    rewind(f);
+
+    *buf = _malloc(sizeof(char) * (fileSize + 1));
+    fread(*buf, sizeof(char), fileSize, f);
+    (*buf)[fileSize] = '\0';
+    fclose(f);
+    return 0;
+}
+
+static void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim) {
+    if(dirname != NULL) {
+        int dirnameSize = strlen(dirname);
+
+        size_t nameBufSize = sizeof(char) * (dirnameSize + 1);
+        char* nameBuf = _malloc(nameBufSize);
+        snprintf(nameBuf, dirnameSize, "%s", dirname);
+        for(int i=0; i<dim; i+=2) {
+            fixFileName(content[i], sizes[i]);
+
+            int pathnameSize = strlen(content[i]);
+            int newSize = nameBufSize + sizeof(char) * (pathnameSize + 1);
+            nameBuf = _realloc(nameBuf, newSize);
+            snprintf(nameBuf + dirnameSize + 1, pathnameSize, "%s", content[i]);
+            nameBuf[newSize - 1] = '\0';
+
+            FILE* f = fopen(content[i], "w");
+            if(f == NULL) {
+                // if file is not opened ignore
+                continue;
+            }
+
+            fwrite(content[i+1], sizeof(char), sizes[i+1], f);
+            fclose(f);
+        }
+        free(nameBuf);
+    }
 }
 
 // returns -1 for errors or the number of bytesWritten
@@ -76,7 +144,7 @@ static int writeMessage(char kind, const char* pathname, const char* content, in
 }
 
 // returns -error for errors or the number of bytesRead
-int readMessage(char*** content, int** sizes, int* size, char** msg) {
+static int readMessage(char*** content, int** sizes, int* size, char** msg) {
     int bytesRead, totalBytesRead = 0, msgSize;
     char intBuf[4];
 
@@ -142,51 +210,18 @@ int readMessage(char*** content, int** sizes, int* size, char** msg) {
     return totalBytesRead;
 }
 
-int openConnection(const char* sockname, int msec, const struct timespec abstime) {
+static int simpleApi(const char* pathname, int flags, char* apiName, char apiKind) {
     errno = 0;
     gettimeofday(&t_start, NULL);
 
-    // setup address
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, UNIX_PATH_MAX, "%s", sockname);
-
-    int success;
-
-    // socket creation
-    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
-    success = sockfd;
-    if (success != -1) {
-        // try connect
-        success = connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
+    if(pathname == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall(apiName, "failure", "", 0, 0);
+        return -1;
     }
 
-    // success
-    gettimeofday(&t_end, NULL);
-    setLastApiCall("openConnection", success == -1 ? "failure" : "success", sockname, 0, 0);
-    return success;
-}
-
-int closeConnection(const char* sockname) {
-    errno = 0;
-    gettimeofday(&t_start, NULL);
-
-    // call to close
-    int success = close(sockfd);
-
-    // handle result
-    gettimeofday(&t_end, NULL);
-    setLastApiCall("closeConnection", success == -1 ? "failure" : "success", sockname, 0, 0);
-    return 0;
-}
-
-int openFile(const char* pathname, int flags) {
-    errno = 0;
-    gettimeofday(&t_start, NULL);
-
     // write content
-    int bytesWritten = writeMessage('o', pathname, "", flags);
+    int bytesWritten = writeMessage(apiKind, pathname, "", flags);
 
     // read response
     char **content, *msgBuf;
@@ -202,13 +237,95 @@ int openFile(const char* pathname, int flags) {
 
     // handle write result
     gettimeofday(&t_end, NULL);
-    setLastApiCall("openFile", success == -1 ? "failure" : "success", pathname, bytesRead, bytesWritten);
+    setLastApiCall(apiName, success == -1 ? "failure" : "success", pathname, bytesRead, bytesWritten);
     return success;
+}
+
+/*
+*   APIs
+*/
+
+int openConnection(const char* sockname, int msec, const struct timespec abstime) {
+    errno = 0;
+    gettimeofday(&t_start, NULL);
+
+    if(sockname == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("openConnection", "failure", "", 0, 0);
+        return -1;
+    }
+
+    // setup address
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    snprintf(addr.sun_path, UNIX_PATH_MAX, "%s", sockname);
+
+    int success;
+
+    // socket creation
+    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    success = sockfd;
+
+    // try connect if successful till now
+    if(success != -1) {
+        struct timespec curTime;
+        timespec_get(&curTime, TIME_UTC);
+        struct timespec sleepTime = { .tv_sec = msec / 1000, .tv_nsec = (msec % 1000) * 1000000};
+        
+        // repeat until success or timeout
+        do {
+            // try connect
+            success = connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
+            
+            // sleep
+            if(success != 0) {
+                nanosleep(&sleepTime, NULL);
+            }
+            
+            // update time
+            timespec_get(&curTime, TIME_UTC);
+        } while(success == -1 && compareTimes(curTime, abstime));
+    }
+
+    // success
+    gettimeofday(&t_end, NULL);
+    setLastApiCall("openConnection", success == -1 ? "failure" : "success", sockname, 0, 0);
+    return success;
+}
+
+int closeConnection(const char* sockname) {
+    errno = 0;
+    gettimeofday(&t_start, NULL);
+
+    if(sockname == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("closeConnection", "failure", "", 0, 0);
+        return -1;
+    }
+
+    // call to close
+    int success = close(sockfd);
+
+    // handle result
+    gettimeofday(&t_end, NULL);
+    setLastApiCall("closeConnection", success == -1 ? "failure" : "success", sockname, 0, 0);
+    return success;
+}
+
+int openFile(const char* pathname, int flags) {
+    return simpleApi(pathname, flags, "openFile", 'o');
 }
 
 int readFile(const char* pathname, void** buf, size_t* size) {
     errno = 0;
     gettimeofday(&t_start, NULL);
+
+    if(pathname == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("readFile", "failure", "", 0, 0);
+        return -1;
+    }
 
     *buf = NULL;
     *size = 0;
@@ -222,14 +339,14 @@ int readFile(const char* pathname, void** buf, size_t* size) {
     int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
 
     int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
-    
+
     // expected a single file to be returned
-    if(success && dim == 1) {
+    if(success == 0 && dim == 2) {
         // copy content to user buffer
-        *buf = _malloc(sizeof(char) * (sizes[0] + 1));
-        strncpy(*buf, content[0], sizes[0]);
-        memset((char*)(*buf) + sizes[0], '\0', 1);
-        *size = sizes[0];
+        *buf = _malloc(sizeof(char) * (sizes[1] + 1));
+        strncpy(*buf, content[1], sizes[1]);
+        memset((char*)(*buf) + sizes[1], '\0', 1);
+        *size = sizes[1];
     } else {
         // set failure
         success = -1;
@@ -242,53 +359,125 @@ int readFile(const char* pathname, void** buf, size_t* size) {
     // handle write result
     gettimeofday(&t_end, NULL);
     setLastApiCall("readFile", success == -1 ? "failure" : "success", pathname, bytesRead, bytesWritten);
-    return bytesWritten == -1 ? -1 : 0;
+    return success;
 }
 
 int readNFiles(int N, const char* dirname) {
     errno = 0;
+    gettimeofday(&t_start, NULL);
 
-    return 0;
+    if(dirname == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("readNFiles", "failure", "", 0, 0);
+        return -1;
+    }
+
+    // write content
+    int bytesWritten = writeMessage('n', "", "", N);
+
+    // read response
+    char **content, *msgBuf;
+    int *sizes, dim;
+    int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
+
+    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+
+    if(success == 0) {
+        writeResultsToFile(dirname, content, sizes, dim);
+    }
+    
+    free(msgBuf);
+    free(content);
+    free(sizes);
+
+    // handle write result
+    gettimeofday(&t_end, NULL);
+    setLastApiCall("readNFiles", success == -1 ? "failure" : "success", "", bytesRead, bytesWritten);
+    return success;
 }
 
 int writeFile(const char* pathname, const char* dirname) {
     errno = 0;
-    // // log_operation(logApi, "writeFile", "started");
-    // // log_operation(logApi, "writeFile", "success");
-    return 0;
+    gettimeofday(&t_start, NULL);
+
+    char* fileBuf;
+    if(pathname == NULL || readFromFile(pathname, &fileBuf) == -1) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("writeFile", "failure", "", 0, 0);
+        return -1;
+    }
+
+    // write content
+    int bytesWritten = writeMessage('w', pathname, fileBuf, 0);
+    free(fileBuf);
+
+    // read response
+    char **content, *msgBuf;
+    int *sizes, dim;
+    int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
+
+    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    
+    if(success == 0) {
+        writeResultsToFile(dirname, content, sizes, dim);
+    }
+    
+    free(msgBuf);
+    free(content);
+    free(sizes);
+
+    // handle write result
+    gettimeofday(&t_end, NULL);
+    setLastApiCall("writeFile", success == -1 ? "failure" : "success", "", bytesRead, bytesWritten);
+    return success;
 }
 
 int appendToFile(const char* pathname, void* buf, size_t size, const char* dirname) {
     errno = 0;
-    // // log_operation(logApi, "appendToFile", "started");
-    // // log_operation(logApi, "appendToFile", "success");
-    return 0;
+    gettimeofday(&t_start, NULL);
+
+    if(pathname == NULL || buf == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("appendToFile", "failure", "", 0, 0);
+        return -1;
+    }
+
+    // write content
+    int bytesWritten = writeMessage('a', pathname, buf, 0);
+
+    // read response
+    char **content, *msgBuf;
+    int *sizes, dim;
+    int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
+
+    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    
+    if(success == 0) {
+        writeResultsToFile(dirname, content, sizes, dim);
+    }
+    
+    free(msgBuf);
+    free(content);
+    free(sizes);
+
+    // handle write result
+    gettimeofday(&t_end, NULL);
+    setLastApiCall("appendToFile", success == -1 ? "failure" : "success", "", bytesRead, bytesWritten);
+    return success;
 }
 
 int lockFile(const char* pathname) {
-    errno = 0;
-    // // log_operation(logApi, "lockFile", "started");
-    // // log_operation(logApi, "lockFile", "success");
-    return 0;
+    return simpleApi(pathname, 0, "lockFile", 'l');
 }
 
 int unlockFile(const char* pathname) {
-    errno = 0;
-    // // log_operation(logApi, "unlockFile", "started");
-    // // log_operation(logApi, "unlockFile", "success");
-    return 0;
+    return simpleApi(pathname, 0, "unlockFile", 'u');
 }
 
 int closeFile(const char* pathname) {
-    errno = 0;
-    // // log_operation(logApi, "closeFile", "started");
-    // // log_operation(logApi, "closeFile", "success");
-    return 0;
+    return simpleApi(pathname, 0, "closeFile", 'c');
 }
 
 int removeFile(const char* pathname) {
-    errno = 0;
-    // // log_operation(logApi, "removeFile", "started");
-    // // log_operation(logApi, "removeFile", "success");
-    return 0;
+    return simpleApi(pathname, 0, "removeFile", 'R');
 }

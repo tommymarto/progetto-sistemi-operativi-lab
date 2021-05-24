@@ -11,9 +11,10 @@
 #define usingDefaultValue "using default value for option -%c"
 #define wrongFlagUsage "-%c flag was not used with either -%c or -%c, proceeding ignoring the flag"
 
+string* socketFileName = NULL;
 bool hFlag = false;
 bool pFlag = false;
-string* socketFileName = NULL;
+int tFlag = 0;
 
 extern char* optarg;
 extern int optind, optopt;
@@ -36,12 +37,12 @@ extern int optind, optopt;
     -c file1[,file2]
 */
 
-void handleSingleParameterWithExtra(vector_request* requests, char request_type, char* arg, char* extra, int index) {
+void handleSingleParameterWithExtra(vector_request* requests, char request_type, char* arg, int extra, int index) {
     requests->append(requests, new_request_without_dir(request_type, arg, extra, index));
 }
 
 void handleSingleParameter(vector_request* requests, char request_type, char* arg, int index) {
-    handleSingleParameterWithExtra(requests, request_type, arg, "", index);
+    handleSingleParameterWithExtra(requests, request_type, arg, 0, index);
 }
 
 void handleMultipleParameters(vector_request* requests, char request_type, char* args, int index) {
@@ -63,6 +64,8 @@ bool argumentValid() {
 vector_request* parseCommandLineArguments(int argc, char *argv[]) {
     vector_request* requests = new_vector_request();
 
+    bool tFound = false;
+
     int opt, index=0;
     while ((opt = getopt(argc, argv, ":hpf:w:W:d:D:r:R:t:l:u:c:")) != -1)
     {
@@ -75,7 +78,7 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 if(optopt == 'R') {
                     log_info(logFound, opt);
                     log_info("using default value for option -R");
-                    handleSingleParameter(requests, opt, "0", index);
+                    handleSingleParameterWithExtra(requests, opt, "", 0, index);
                 } else {
                     log_error("option '-%c' requires an argument", optopt);
                 }
@@ -97,6 +100,21 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 }
                 log_info(logFound, 'p');
                 pFlag = true;
+                break;
+            }
+            case 't': {
+                if(tFound) {
+                    log_error(logAlreadyFound, 't');
+                    break;
+                }
+                long tmp;
+                if(!strToInt(optarg, &tmp)) {
+                    log_error("t flag expected argument to be int");
+                    break;
+                }
+                log_info(logFoundWithParams, 't', optarg);
+                tFound = true;
+                tFlag = (int)tmp;
                 break;
             }
             case 'f': {
@@ -136,21 +154,35 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                     n = "0";
                 }
 
-                handleSingleParameterWithExtra(requests, opt, v_args->get(v_args, 0)->content, n, index);
+                
+                long tmp;
+                if(!strToInt(n, &tmp)) {
+                    log_error("option 'w' optional argument expected to be int");
+                    v_args->free(v_args);
+                    break;
+                }
+
+                handleSingleParameterWithExtra(requests, opt, v_args->get(v_args, 0)->content, (int)tmp, index);
                 v_args->free(v_args);
                 break;
             }
             case 'R': {
                 if(!argumentValid()) {
+                    long tmp;
+                    if(!strToInt(optarg, &tmp)) {
+                        log_error("option 'R' optional argument expected to be int");
+                        break;
+                    }
+
                     log_info(logFound, opt);
                     log_info(usingDefaultValue, opt);
-                    handleSingleParameter(requests, opt, "0", index);
+
+                    handleSingleParameterWithExtra(requests, opt, "", (int)tmp, index);
                     break;
                 }
             }
             case 'd':
-            case 'D':
-            case 't': {
+            case 'D': {
                 log_info(logFoundWithParams, opt, optarg);
                 handleSingleParameter(requests, opt, optarg, index);
                 break;

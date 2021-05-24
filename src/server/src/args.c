@@ -1,6 +1,7 @@
 #include <args.h>
 
 #include <logging.h>
+#include <stringutils.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -9,26 +10,6 @@
 extern int errno;
 
 #define logFoundWithParams "found option %s with argument %s"
-
-// converts str to unsigned integers. returns true if successful, false otherwise
-static inline bool strToInt(const char* src, long* result) {
-    errno = 0;
-    char* end = NULL;
-
-    // check for string validity
-    if (src == NULL || strlen(src) == 0) {
-        return false;
-    }
-
-    // try conversion
-    *result = strtol(src, &end, 10);
-    if (errno == ERANGE || (end == NULL || *end != '\0')) {
-        return false;
-    }
-
-    // success
-    return true;
-}
 
 int fpeek(FILE *stream) {
     int c = fgetc(stream);

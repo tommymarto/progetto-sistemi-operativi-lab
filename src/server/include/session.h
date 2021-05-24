@@ -10,7 +10,7 @@ struct session {
     bool isActive;
     bool opStatus;
     char* openedFiles[MAX_OPENED_FILES];
-    short openedFileFlags[MAX_OPENED_FILES];
+    bool canWriteOnFile[MAX_OPENED_FILES];
 
     int (*isFileOpened)(session* self, char* pathname);
 };

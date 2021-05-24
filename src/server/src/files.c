@@ -19,7 +19,7 @@ struct hashEntry {
     int queueTail;
 };
 
-pthread_rwlock_t locks[HASHTABLE_SIZE] = { PTHREAD_RWLOCK_INITIALIZER };
+pthread_rwlock_t tableLock = PTHREAD_RWLOCK_INITIALIZER;
 hashEntry* filesystem[HASHTABLE_SIZE] = { NULL };
 
 request_queue clientsToNotify;
@@ -37,6 +37,20 @@ unsigned long hash(unsigned char *str) {
     }
 
     return hash;
+}
+
+fileEntry* deep_copy_file(fileEntry* f) {
+    fileEntry* result = _malloc(sizeof(fileEntry));
+    memcpy(result, f, sizeof(fileEntry));
+
+    // deep copy file
+    result->buf = _malloc(f->bufLen);
+    memcpy(result->buf, f->buf, f->bufLen);
+    
+    // adjust pointers
+    result->content = result->buf + (f->content - f->buf);
+    result->pathname = result->buf + (f->pathname - f->buf);
+    return result;
 }
 
 void free_hashEntry(hashEntry* e) {
@@ -93,12 +107,12 @@ static int lockfile(request* r, char* pathname, int index, int sessionFileIndex)
     if(h != NULL) {
         if(h->file->owner == -1) {
             h->file->owner = client->clientFd;
-            client->openedFileFlags[sessionFileIndex] |= O_LOCK;
             return 1;
         }
         // if there's place in the waiting queue
         if((h->queueTail - h->queueHead) < MAX_CLIENTS_WAITING_FOR_LOCK) {
             h->waitingQueue[h->queueTail % MAX_CLIENTS_WAITING_FOR_LOCK] = r;
+            h->queueTail++;
             return 0;
         }
     }
@@ -116,8 +130,6 @@ void init_filesystem() {
 
 void free_filesystem() {
     for(int i=0; i<HASHTABLE_SIZE; i++) {
-        pthread_rwlock_destroy(&locks[i]);
-
         hashEntry* e = filesystem[i];
         while(e != NULL) {
             hashEntry* nextE = e->next;
@@ -141,29 +153,19 @@ fileEntry* filesystem_get_fileEntry(char* pathname) {
     // get bucket index
     int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
 
-    fileEntry* result;
+    fileEntry* result = NULL;
 
     // acquire bucket lock in read mode
-    pthread_rwlock_rdlock(&locks[index]);
+    pthread_rwlock_rdlock(&tableLock);
 
     fileEntry* f = get_fileEntry_ref(pathname, index);
 
     // copy out result
     if(f != NULL) {
-        result = _malloc(sizeof(fileEntry));
-        memcpy(result, f, sizeof(fileEntry));
-
-        // deep copy strings
-        result->content = _malloc(sizeof(char) * (f->length + 1));
-        strncpy(result->content, f->content, f->length);
-        result->content[f->length] = '\0';
-
-        result->pathname = _malloc(sizeof(char) * (f->pathlen + 1));
-        strncpy(result->pathname, f->pathname, f->pathlen);
-        result->pathname[f->pathlen] = '\0';
+        result = deep_copy_file(f);
     }
 
-    pthread_rwlock_unlock(&locks[index]);
+    pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
@@ -173,76 +175,119 @@ bool filesystem_fileExists(char* pathname) {
     int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
 
     // acquire bucket lock in read mode
-    pthread_rwlock_rdlock(&locks[index]);
+    pthread_rwlock_rdlock(&tableLock);
     
     bool result = get_fileEntry_ref(pathname, index) != NULL;
 
-    pthread_rwlock_unlock(&locks[index]);
+    pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
 
+// result = -1 if failed, 0 if the lock request is in queue, 1 if lock is immediately acquired
 fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flags) {
     // get bucket index
-    int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
+    unsigned int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
 
     bool failed = false;
+    *result = 1;
 
     session* client = r->client;
 
     // acquire bucket lock in read mode
-    pthread_rwlock_wrlock(&locks[index]);
+    pthread_rwlock_wrlock(&tableLock);
 
-    int descriptor = getFreeFileDescriptor(client);
-    if(descriptor == -1) {
-        failed = true;
-    }
-
-    if((flags & O_CREATE) && !failed) {
-        // prepare dummy content
-        int pathnameLen = strlen(pathname);
-        char* buf = _malloc(sizeof(char) * (pathnameLen + 1));
-        strncpy(buf, pathname, pathnameLen);
-        buf[pathnameLen] = '\0';
-
-        fileEntry* f = _malloc(sizeof(fileEntry));
-        f->owner = -1;
-        f->buf = buf;
-        f->pathname = buf;
-        f->pathlen = pathnameLen;
-        f->content = buf + pathnameLen;
-        f->length = 0;
-
-        failed = !put_fileEntry_ref(f, index);
-
-        if(failed) {
-            free(buf);
-            free(f);
-        }
-    } else {
-        failed = get_fileEntry_ref(pathname, index) == NULL;
-    }
-
-    if((flags & O_LOCK) && !failed) {
-        int lockresult = lockfile(r, pathname, index, descriptor);
-
-        // impossible but handled anyways 
-        if(lockresult != 1) {
+    if(isFileOpened(client, pathname) == -1) {
+        int descriptor = getFreeFileDescriptor(client);
+        if(descriptor == -1) {
             failed = true;
         }
+
+        if((flags & O_CREATE) && !failed) {
+            // prepare dummy content
+            int pathnameLen = strlen(pathname);
+            int bufSize = pathnameLen + 1;
+            char* buf = _malloc(sizeof(char) * bufSize);
+            strncpy(buf, pathname, pathnameLen);
+            buf[pathnameLen] = '\0';
+
+            fileEntry* f = _malloc(sizeof(fileEntry));
+            f->owner = -1;
+            f->buf = buf;
+            f->bufLen = bufSize;
+            f->pathname = buf;
+            f->pathlen = pathnameLen;
+            f->content = buf + pathnameLen;
+            f->length = 0;
+
+            failed = !put_fileEntry_ref(f, index);
+
+            if(failed) {
+                free(buf);
+                free(f);
+            }
+        } else {
+            failed = get_fileEntry_ref(pathname, index) == NULL;
+        }
+
+        if((flags & O_LOCK) && !failed) {
+            *result = lockfile(r, pathname, index, descriptor);
+
+            if(*result != 1) {
+                failed = true;
+            }
+        }
+
+        if(!failed) {
+            int pathLen = strlen(pathname);
+            client->openedFiles[descriptor] = _malloc(sizeof(char) * (pathLen + 1));
+            strncpy(client->openedFiles[descriptor], pathname, pathLen);
+            client->openedFiles[descriptor][pathLen] = '\0';
+            
+            if((flags & O_CREATE) && (flags & O_LOCK)) {
+                client->canWriteOnFile[descriptor] = true;
+            }
+        }
     }
 
-    if(!failed) {
-        int pathLen = strlen(pathname);
-        client->openedFiles[descriptor] = _malloc(sizeof(char) * (pathLen + 1));
-        strncpy(client->openedFiles[descriptor], pathname, pathLen);
-        
-        client->openedFileFlags[descriptor] = flags;
+    pthread_rwlock_unlock(&tableLock);
+
+    *result = failed ? -1 : *result;
+
+    return NULL;
+}
+
+fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f) {
+    // get bucket index
+    int index = hash((unsigned char*)f->pathname) % HASHTABLE_SIZE;
+
+    session* client = r->client;
+
+    *result = -1;
+
+    // acquire bucket lock in write mode
+    pthread_rwlock_wrlock(&tableLock);
+
+    fileEntry* fileToWrite = get_fileEntry_ref(f->pathname, index);
+    if(fileToWrite != NULL && fileToWrite->owner == client->clientFd) {
+        int descriptor = isFileOpened(client, f->pathname);
+        if(descriptor != -1 && client->canWriteOnFile[descriptor]) {
+            // shallow copy file
+            free(fileToWrite->buf);
+
+            fileToWrite->buf = f->buf;
+            fileToWrite->bufLen = f->bufLen;
+            fileToWrite->content = f->content;
+            fileToWrite->length = f->length;
+            fileToWrite->pathname = f->pathname;
+
+            *result = 1;
+        }
     }
 
-    pthread_rwlock_unlock(&locks[index]);
+    pthread_rwlock_unlock(&tableLock);
 
-    *result = failed ? -1 : 0;
+    *dim = 0;
 
     return NULL;
 }
@@ -256,14 +301,14 @@ int filesystem_lockAcquire(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    pthread_rwlock_wrlock(&locks[index]);
+    pthread_rwlock_wrlock(&tableLock);
     
     int fileIndex = client->isFileOpened(client, pathname);
     if(fileIndex != -1) {
         result = lockfile(r, pathname, index, fileIndex);
     }
 
-    pthread_rwlock_unlock(&locks[index]);
+    pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
