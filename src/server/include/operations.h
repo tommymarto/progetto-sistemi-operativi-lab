@@ -12,7 +12,7 @@ fileEntry** readNFiles(request* r, int* result, int* dim, int N);
 // request kind: 'w'
 fileEntry** writeFile(request* r, int* result, int* dim, fileEntry* file);
 // request kind: 'a'
-fileEntry** appendToFile(request* r, int* result, int* dim, char* pathname, char* content, int size);
+fileEntry** appendToFile(request* r, int* result, int* dim, fileEntry* file);
 // request kind: 'l'
 int lockFile(request* r, char* pathname);
 // request kind: 'u'

@@ -163,119 +163,125 @@ int main(int argc, char *argv[]) {
         timespec_get(&timeout, TIME_UTC);
         timeout.tv_sec += 5;
 
+        bool connectionFailed = false;
+
         if(openConnection(socketFileName->content, 10, timeout) == -1) {
             log_last_api_call();
             log_fatal("unable to create socket");
             log_fatal("exiting the program...");
-            exit(EXIT_FAILURE);
+            connectionFailed = true;
         }
         log_last_api_call();
 
-        for(int i=0; i<requests->size; i++) {
+        if(!connectionFailed) {
+
+            for(int i=0; i<requests->size; i++) {
+                // sleep
+                nanosleep(&sleepTime, NULL);
+
+                request* r = requests->get(requests, i);
+                char type = r->type;
+                
+                int result;
+
+                log_info("processing request '%c'", type);
+
+                switch (type) {
+                    case 'w': {
+                        int remaining = r->extra;
+                        if(remaining == 0) {
+                            remaining = INT_MAX;
+                        }
+
+                        int contentSize = strlen(r->content);
+                        if(r->content[contentSize - 1] == '/') {
+                            r->content[contentSize - 1] = '\0';
+                        }
+
+                        handleSmallWFlag(r->content, r->dir, &remaining);
+                        break;
+                    }
+                    case 'W': {
+                        result = openFile(r->content, O_CREATE | O_LOCK);
+                        logAndSkipIfOperationFailed("W", "openFile");
+                        result = writeFile(r->content, r->dir);
+                        log_last_api_call();
+                        if(result == -1) {
+                            log_error("error while processing flag 'W': writeFile failed. Skipping request...");
+                        }
+                        result = closeFile(r->content);
+                        logAndSkipIfOperationFailed("W", "closeFile");
+                        break;
+                    }
+                    case 'r': {
+                        size_t bufSize;
+                        char* buf;
+
+
+                        result = openFile(r->content, 0);
+                        logAndSkipIfOperationFailed("r", "openFile");
+                        result = readFile(r->content, (void**)&buf, &bufSize);
+                        log_last_api_call();
+                        if(result == -1) {
+                            log_error("error while processing flag 'r': readFile failed. Skipping request...");
+                        }
+                        if(result != -1) {
+                            log_info("%d - %s", bufSize, buf);
+                        }
+                        free(buf);
+                        result = closeFile(r->content);
+                        logAndSkipIfOperationFailed("r", "closeFile");
+                        break;
+                    }
+                    case 'R': {
+                        result = readNFiles(r->extra, r->dir);
+                        logAndSkipIfOperationFailed("R", "readNFiles");
+                        break;
+                    }
+                    case 'l': {
+                        result = openFile(r->content, 0);
+                        logAndSkipIfOperationFailed("l", "openFile");
+                        result = lockFile(r->content);
+                        logAndSkipIfOperationFailed("l", "lockFile");
+                        break;
+                    }
+                    case 'u': {
+                        result = unlockFile(r->content);
+                        if(result == -1) {
+                            log_error("error while processing flag 'u': unlockFile failed. Skipping request...");
+                        }
+                        result = closeFile(r->content);
+                        logAndSkipIfOperationFailed("u", "closeFile");
+                        break;
+                    }
+                    case 'c': {
+                        result = openFile(r->content, O_LOCK);
+                        logAndSkipIfOperationFailed("c", "openFile");
+                        result = lockFile(r->content);
+                        logAndSkipIfOperationFailed("c", "lockFile");
+                        result = removeFile(r->content);
+                        logAndSkipIfOperationFailed("c", "removeFile");
+                        break;
+                    }
+                    case 'd':
+                    case 'D': {
+                        log_info("request '%c' already handled", type);
+                        break;
+                    }
+                    default: {
+                        log_error("unhandled request type '%c'", type);
+                        break;
+                    }
+                }
+            }
+
             // sleep
             nanosleep(&sleepTime, NULL);
 
-            request* r = requests->get(requests, i);
-            char type = r->type;
-            
-            int result;
-
-            log_info("processing request '%c'", type);
-
-            switch (type) {
-                case 'w': {
-                    int remaining = r->extra;
-                    if(remaining == 0) {
-                        remaining = INT_MAX;
-                    }
-
-                    int contentSize = strlen(r->content);
-                    if(r->content[contentSize - 1] == '/') {
-                        r->content[contentSize - 1] = '\0';
-                    }
-
-                    handleSmallWFlag(r->content, r->dir, &remaining);
-                    break;
-                }
-                case 'W': {
-                    result = openFile(r->content, O_CREATE | O_LOCK);
-                    logAndSkipIfOperationFailed("W", "openFile");
-                    result = writeFile(r->content, r->dir);
-                    log_last_api_call();
-                    if(result == -1) {
-                        log_error("error while processing flag 'W': writeFile failed. Skipping request...");
-                    }
-                    result = closeFile(r->content);
-                    logAndSkipIfOperationFailed("W", "closeFile");
-                    break;
-                }
-                case 'r': {
-                    size_t bufSize;
-                    char* buf;
-
-
-                    result = openFile(r->content, 0);
-                    logAndSkipIfOperationFailed("r", "openFile");
-                    result = readFile(r->content, (void**)&buf, &bufSize);
-                    log_last_api_call();
-                    if(result == -1) {
-                        log_error("error while processing flag 'r': readFile failed. Skipping request...");
-                    }
-                    if(result != -1) {
-                        log_info("%d - %s", bufSize, buf);
-                    }
-                    free(buf);
-                    result = closeFile(r->content);
-                    logAndSkipIfOperationFailed("r", "closeFile");
-                    break;
-                }
-                case 'R': {
-                    result = readNFiles(r->extra, r->dir);
-                    logAndSkipIfOperationFailed("R", "readNFiles");
-                    break;
-                }
-                case 'l': {
-                    result = openFile(r->content, 0);
-                    logAndSkipIfOperationFailed("l", "openFile");
-                    result = lockFile(r->content);
-                    logAndSkipIfOperationFailed("l", "lockFile");
-                }
-                case 'u': {
-                    result = unlockFile(r->content);
-                    if(result == -1) {
-                        log_error("error while processing flag 'u': unlockFile failed. Skipping request...");
-                    }
-                    result = closeFile(r->content);
-                    logAndSkipIfOperationFailed("u", "closeFile");
-                    break;
-                }
-                case 'c': {
-                    result = openFile(r->content, 0);
-                    logAndSkipIfOperationFailed("c", "openFile");
-                    result = lockFile(r->content);
-                    logAndSkipIfOperationFailed("c", "lockFile");
-                    result = removeFile(r->content);
-                    logAndSkipIfOperationFailed("c", "removeFile");
-                    break;
-                }
-                case 'd':
-                case 'D': {
-                    log_info("request '%c' already handled", type);
-                    break;
-                }
-                default: {
-                    log_error("unhandled request type '%c'", type);
-                    break;
-                }
+            if(closeConnection(socketFileName->content) == -1) {
+                log_fatal("error during socket close");
+                log_fatal("exiting the program...");
             }
-        }
-
-        // sleep
-        nanosleep(&sleepTime, NULL);
-
-        if(closeConnection(socketFileName->content) == -1) {
-            log_fatal("error during socket close");
-            log_fatal("exiting the program...");
         }
     }
 

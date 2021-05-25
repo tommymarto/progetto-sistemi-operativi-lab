@@ -106,6 +106,7 @@ static int writeMessage(char kind, const char* pathname, const char* content, in
     size_t payloadLen = sizeof(char) + sizeof(int) + sizeof(char) * (pathnameLen + 1) + sizeof(int) + sizeof(char) * contentLen + sizeof(int);
     size_t headerLen = sizeof(int);
     size_t msgLen = headerLen + payloadLen;
+
     char* msg = _malloc(msgLen);
     
     // build the message
@@ -140,6 +141,7 @@ static int writeMessage(char kind, const char* pathname, const char* content, in
     // write message
     int bytesWritten = writen(sockfd, msg, msgLen);
     free(msg);
+
     return bytesWritten > 0 ? bytesWritten : -1;
 }
 
@@ -228,7 +230,7 @@ static int simpleApi(const char* pathname, int flags, char* apiName, char apiKin
     int *sizes, dim;
     int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
 
-    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    int success = (bytesWritten > 0 && bytesRead > 0) ? 0 : -1;
 
     // discard content
     free(msgBuf);
@@ -338,7 +340,7 @@ int readFile(const char* pathname, void** buf, size_t* size) {
     int *sizes, dim;
     int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
 
-    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    int success = (bytesWritten > 0 && bytesRead > 0) ? 0 : -1;
 
     // expected a single file to be returned
     if(success == 0 && dim == 2) {
@@ -380,7 +382,7 @@ int readNFiles(int N, const char* dirname) {
     int *sizes, dim;
     int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
 
-    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    int success = (bytesWritten > 0 && bytesRead > 0) ? 0 : -1;
 
     if(success == 0) {
         writeResultsToFile(dirname, content, sizes, dim);
@@ -416,7 +418,7 @@ int writeFile(const char* pathname, const char* dirname) {
     int *sizes, dim;
     int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
 
-    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    int success = (bytesWritten > 0 && bytesRead > 0) ? 0 : -1;
     
     if(success == 0) {
         writeResultsToFile(dirname, content, sizes, dim);
@@ -450,7 +452,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
     int *sizes, dim;
     int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
 
-    int success = (bytesWritten != -1 && bytesRead != -1) ? 0 : -1;
+    int success = (bytesWritten > 0 && bytesRead > 0) ? 0 : -1;
     
     if(success == 0) {
         writeResultsToFile(dirname, content, sizes, dim);

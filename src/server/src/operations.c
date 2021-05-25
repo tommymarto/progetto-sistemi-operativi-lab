@@ -29,7 +29,7 @@ fileEntry** openFile(request* r, int* result, int* dim, char* pathname, int flag
         return NULL;
     }
 
-    *result = 3;
+    *result = 1;
 
     fileEntry** returnValue = _malloc(sizeof(fileEntry*));
     returnValue[0] = expelledFile;
@@ -52,7 +52,7 @@ fileEntry** readFile(request* r, int* result, int* dim, char* pathname) {
         return NULL;
     }
 
-    *result = 3;
+    *result = 1;
     log_operation(logOperationString, "readFile", "success", pathname);
 
     fileEntry** returnValue = _malloc(sizeof(fileEntry*));
@@ -83,8 +83,20 @@ fileEntry** writeFile(request* r, int* result, int* dim, fileEntry* file) {
     return filesExpelled;
 }
 
-fileEntry** appendToFile(request* r, int* result, int* dim, char* pathname, char* content, int size) {
-    return NULL;
+fileEntry** appendToFile(request* r, int* result, int* dim, fileEntry* file) {
+    log_operation(logOperationString, "appendToFile", "started", file->pathname);
+    fileEntry** filesExpelled = filesystem_appendToFile(result, dim, r, file);
+
+    // write failed
+    if(*result < 0) {
+        log_operation(logOperationString, "appendToFile", "failed", file->pathname);
+        return NULL;
+    }
+
+    log_operation(logOperationString, "appendToFile", "success", file->pathname);
+
+    *result = 1;
+    return filesExpelled;
 }
 
 int lockFile(request* r, char* pathname) {
@@ -97,11 +109,19 @@ int lockFile(request* r, char* pathname) {
     }
 
     log_operation(logOperationString, "lockFile", "success", pathname);
-    return 1;
+    return result;
 }
 
 int unlockFile(request* r, char* pathname) {
-    log_operation(logOperationString, "openFile", "started", pathname);
+    log_operation(logOperationString, "unlockFile", "started", pathname);
+    int result = filesystem_lockRelease(r, pathname);
+
+    if(result < 0) {
+        log_operation(logOperationString, "unlockFile", "failed", pathname);
+        return result;
+    }
+
+    log_operation(logOperationString, "unlockFile", "success", pathname);
     return 1;
 }
 
@@ -115,6 +135,7 @@ int closeFile(request* r, char* pathname) {
     }
     log_operation(logOperationString, "closeFile", "success", pathname);
 
+    filesystem_lockRelease(r, pathname);
     free(r->client->openedFiles[descriptor]);
     r->client->openedFiles[descriptor] = NULL;
     r->client->canWriteOnFile[descriptor] = false;

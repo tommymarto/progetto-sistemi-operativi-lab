@@ -1,13 +1,13 @@
 #include <requestqueue.h>
 
 void init_request_queue(request_queue* queue) {
-    pthread_mutex_lock(&queue->lock);
+    pthread_mutex_init(&queue->lock, NULL);
+    pthread_cond_init(&queue->itemAdded, NULL);
+    pthread_cond_init(&queue->itemRemoved, NULL);
 
     queue->head = 0;
     queue->tail = 0;
     queue->closed = false;
-    
-    pthread_mutex_unlock(&queue->lock);
 }
 
 void insert_request_queue(request_queue* queue, request* item) {
@@ -54,7 +54,7 @@ request* remove_request_queue(request_queue* queue) {
     return item;
 }
 
-void wait_queue_empty(request_queue* queue) {
+void wait_request_queue_empty(request_queue* queue) {
     pthread_mutex_lock(&queue->lock);
     
     // wait till queue is empty
@@ -65,7 +65,7 @@ void wait_queue_empty(request_queue* queue) {
     pthread_mutex_unlock(&queue->lock);
 }
 
-void free_queue(request_queue* queue) {
+void free_request_queue(request_queue* queue) {
     pthread_mutex_lock(&queue->lock);
     
     // clean queue if there are values left
@@ -76,6 +76,10 @@ void free_queue(request_queue* queue) {
     }
 
     pthread_mutex_unlock(&queue->lock);
+
+    pthread_mutex_destroy(&queue->lock);
+    pthread_cond_destroy(&queue->itemAdded);
+    pthread_cond_destroy(&queue->itemRemoved);
 }
 
 void close_request_queue(request_queue* queue) {

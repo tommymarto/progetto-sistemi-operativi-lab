@@ -86,6 +86,8 @@ bool put_fileEntry_ref(fileEntry* newFile, int index) {
 
     hashEntry* newHash = _malloc(sizeof(hashEntry));
     newHash->file = newFile;
+    newHash->queueHead = 0;
+    newHash->queueTail = 0;
 
     // put entry in the table if it does not esists
     if(get_fileEntry_ref(newFile->pathname, index) == NULL) {
@@ -108,16 +110,100 @@ static int lockfile(request* r, char* pathname, int index, int sessionFileIndex)
         if(h->file->owner == -1) {
             h->file->owner = client->clientFd;
             return 1;
+        } else if(h->file->owner == client->clientFd) {
+            return 1;
         }
         // if there's place in the waiting queue
         if((h->queueTail - h->queueHead) < MAX_CLIENTS_WAITING_FOR_LOCK) {
             h->waitingQueue[h->queueTail % MAX_CLIENTS_WAITING_FOR_LOCK] = r;
             h->queueTail++;
+
+            int pathnameLen = h->file->pathlen;
+            client->pathnamePendingLock = _malloc(sizeof(char) * (h->file->pathlen + 1));
+            strncpy(client->pathnamePendingLock, h->file->pathname, pathnameLen);
+            client->pathnamePendingLock[pathnameLen] = '\0';
             return 0;
         }
     }
 
     return -1;
+}
+
+// returns 1 if lock is successfully released, -1 if request failed
+static int unlockfileWithSession(session* client, char* pathname, int index, int sessionFileIndex) {
+    hashEntry* h = get_hashEntry_ref(pathname, index);
+
+    int result = -1;
+
+    if(h != NULL) {
+        // request came from the real owner
+        if(h->file->owner == client->clientFd) {
+            h->file->owner = -1;
+            client->canWriteOnFile[sessionFileIndex] = false;
+            
+            // give ownership to the next one in the waiting queue skipping nulls
+            while(h->queueTail != h->queueHead) {
+                request* nextOwner = h->waitingQueue[h->queueHead % MAX_CLIENTS_WAITING_FOR_LOCK];
+                h->queueHead++;
+                if(h->queueHead >= MAX_CLIENTS_WAITING_FOR_LOCK) {
+                    h->queueHead -= MAX_CLIENTS_WAITING_FOR_LOCK;
+                    h->queueTail -= MAX_CLIENTS_WAITING_FOR_LOCK;
+                }
+
+                if(nextOwner == NULL) {
+                    continue;
+                }
+
+                h->file->owner = nextOwner->client->clientFd;
+                free(nextOwner->client->pathnamePendingLock);
+                nextOwner->client->pathnamePendingLock = NULL;
+                nextOwner->client->opStatus = true;
+                insert_request_queue(&clientsToNotify, nextOwner);
+                break;
+            }
+
+            result = 1;
+        }
+    }
+
+    return result;
+}
+
+// returns 1 if lock is successfully released, -1 if request failed
+static inline int unlockfile(request* r, char* pathname, int index, int sessionFileIndex) {
+    return unlockfileWithSession(r->client, pathname, index, sessionFileIndex);
+}
+
+void clean_pending_lock_request(session* client, bool needToNotify) {
+    char* pathnamePendingLock = client->pathnamePendingLock;
+    if(pathnamePendingLock != NULL) {
+        // get bucket index
+        int index = hash((unsigned char*)pathnamePendingLock) % HASHTABLE_SIZE;
+        hashEntry* h = get_hashEntry_ref(pathnamePendingLock, index);
+        
+        // it shouldn't happen to have a pending request on a non-existing file
+        if(h != NULL) {
+            // find request to delete
+            for(int i=h->queueHead; i<h->queueTail; i++) {
+                request* r = h->waitingQueue[i % MAX_CLIENTS_WAITING_FOR_LOCK];
+                // found correct request
+                if(r->client->clientFd == client->clientFd) {
+                    h->waitingQueue[i % MAX_CLIENTS_WAITING_FOR_LOCK] = NULL;
+
+                    free(client->pathnamePendingLock);
+                    client->pathnamePendingLock = NULL;
+
+                    if(needToNotify) {
+                        client->opStatus = false;
+                        insert_request_queue(&clientsToNotify, r);
+                    }
+                }
+            }
+        }
+
+        free(pathnamePendingLock);
+        client->pathnamePendingLock = NULL;
+    }
 }
 
 /* 
@@ -126,6 +212,25 @@ static int lockfile(request* r, char* pathname, int index, int sessionFileIndex)
 
 void init_filesystem() {
     init_request_queue(&clientsToNotify);
+}
+
+void filesystem_handle_connectionClosed(session* closedClient) {
+    pthread_rwlock_wrlock(&tableLock);
+
+    // clear pending lock request
+    clean_pending_lock_request(closedClient, false);
+
+    // unlock locked files
+    for(int i=0; i<MAX_OPENED_FILES; i++) {
+        char* pathname = closedClient->openedFiles[i];
+        if(pathname != NULL) {
+            // get bucket index
+            int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
+            unlockfileWithSession(closedClient, pathname, index, i);
+        }
+    }
+
+    pthread_rwlock_unlock(&tableLock);
 }
 
 void free_filesystem() {
@@ -137,7 +242,7 @@ void free_filesystem() {
             e = nextE;
         }
     }
-    free_queue(&clientsToNotify);
+    free_request_queue(&clientsToNotify);
 }
 
 // returns a request with a status (1 if lock was acquired, 0 if file has been deleted)
@@ -170,6 +275,28 @@ fileEntry* filesystem_get_fileEntry(char* pathname) {
     return result;
 }
 
+fileEntry** filesystem_get_n_fileEntry(int* dim, int n) {
+    // // get bucket index
+    // int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
+
+    // fileEntry* result = NULL;
+
+    // // acquire bucket lock in read mode
+    // pthread_rwlock_rdlock(&tableLock);
+
+    // fileEntry* f = get_fileEntry_ref(pathname, index);
+
+    // // copy out result
+    // if(f != NULL) {
+    //     result = deep_copy_file(f);
+    // }
+
+    // pthread_rwlock_unlock(&tableLock);
+
+    // return result;
+    return NULL;
+}
+
 bool filesystem_fileExists(char* pathname) {
     // get bucket index
     int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
@@ -184,7 +311,7 @@ bool filesystem_fileExists(char* pathname) {
     return result;
 }
 
-// result = -1 if failed, 0 if the lock request is in queue, 1 if lock is immediately acquired
+// result = -1 if failed, 0 if the lock request is in queue, 1 if lock is immediately acquired or if O_LOCK was not set and no errors
 fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flags) {
     // get bucket index
     unsigned int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
@@ -194,10 +321,20 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
 
     session* client = r->client;
 
-    // acquire bucket lock in read mode
-    pthread_rwlock_wrlock(&tableLock);
+    // choose acquire mode depending on operations to be performed
+    if(!(flags & O_CREATE) && !(flags & O_LOCK)) {
+        pthread_rwlock_rdlock(&tableLock);
+    } else {
+        pthread_rwlock_wrlock(&tableLock);
+    }
 
     if(isFileOpened(client, pathname) == -1) {
+        if(isFileOpened(client, pathname) != -1) {
+            if(flags & O_CREATE) {
+                failed = true;
+            }
+        }
+
         int descriptor = getFreeFileDescriptor(client);
         if(descriptor == -1) {
             failed = true;
@@ -226,7 +363,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
                 free(buf);
                 free(f);
             }
-        } else {
+        } else if(!failed) {
             failed = get_fileEntry_ref(pathname, index) == NULL;
         }
 
@@ -281,6 +418,45 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
             fileToWrite->length = f->length;
             fileToWrite->pathname = f->pathname;
 
+            client->canWriteOnFile[descriptor] = false;
+
+            *result = 1;
+        }
+    }
+
+    pthread_rwlock_unlock(&tableLock);
+
+    *dim = 0;
+
+    return NULL;
+}
+
+fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry* f) {
+    // get bucket index
+    int index = hash((unsigned char*)f->pathname) % HASHTABLE_SIZE;
+
+    session* client = r->client;
+
+    *result = -1;
+
+    // acquire bucket lock in write mode
+    pthread_rwlock_wrlock(&tableLock);
+
+    int descriptor = isFileOpened(client, f->pathname);
+    if(descriptor != -1) {
+        fileEntry* fileToEdit = get_fileEntry_ref(f->pathname, index);
+        if(fileToEdit != NULL) {
+            // resize underlying buffer and copy content
+            int newSize = fileToEdit->bufLen + f->length;
+            fileToEdit->buf = _realloc(fileToEdit->buf, sizeof(char) * (newSize + 1));
+            fileToEdit->bufLen += f->length;
+            fileToEdit->buf[newSize] = '\0';
+
+            strncpy(fileToEdit->content + fileToEdit->length, f->content, f->length);
+            fileToEdit->content += f->length;
+            
+            client->canWriteOnFile[descriptor] = false;
+
             *result = 1;
         }
     }
@@ -306,6 +482,79 @@ int filesystem_lockAcquire(request* r, char* pathname) {
     int fileIndex = client->isFileOpened(client, pathname);
     if(fileIndex != -1) {
         result = lockfile(r, pathname, index, fileIndex);
+    }
+
+    pthread_rwlock_unlock(&tableLock);
+
+    return result;
+}
+
+int filesystem_lockRelease(request* r, char* pathname) {
+    // get bucket index
+    int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
+
+    session* client = r->client;
+
+    int result = -1;
+
+    // acquire bucket lock in write mode
+    pthread_rwlock_wrlock(&tableLock);
+    
+    int fileIndex = client->isFileOpened(client, pathname);
+    if(fileIndex != -1) {
+        result = unlockfile(r, pathname, index, fileIndex);
+        client->canWriteOnFile[fileIndex] = false;
+    }
+
+    pthread_rwlock_unlock(&tableLock);
+
+    return result;
+}
+
+int filesystem_removeFile(request* r, char* pathname) {
+    // get bucket index
+    int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
+
+    session* client = r->client;
+
+    int result = -1;
+
+    // acquire bucket lock in write mode
+    pthread_rwlock_wrlock(&tableLock);
+    
+
+    int descriptor = isFileOpened(client, pathname);
+    if(descriptor != -1) {
+        hashEntry* h = get_hashEntry_ref(pathname, index);
+
+        if(h != NULL) {
+            // request came from the real owner
+            if(h->file->owner == client->clientFd) {
+                client->canWriteOnFile[descriptor] = false;
+                
+                // notify all waiting file of the removal
+                while(h->queueTail != h->queueHead) {
+                    request* nextOwner = h->waitingQueue[h->queueHead % MAX_CLIENTS_WAITING_FOR_LOCK];
+                    h->queueHead++;
+                    if(h->queueHead >= MAX_CLIENTS_WAITING_FOR_LOCK) {
+                        h->queueHead -= MAX_CLIENTS_WAITING_FOR_LOCK;
+                        h->queueTail -= MAX_CLIENTS_WAITING_FOR_LOCK;
+                    }
+
+                    if(nextOwner == NULL) {
+                        continue;
+                    }
+
+                    free(nextOwner->client->pathnamePendingLock);
+                    nextOwner->client->pathnamePendingLock = NULL;
+                    nextOwner->client->opStatus = false;
+
+                    insert_request_queue(&clientsToNotify, nextOwner);
+                }
+
+                result = 1;
+            }
+        }
     }
 
     pthread_rwlock_unlock(&tableLock);

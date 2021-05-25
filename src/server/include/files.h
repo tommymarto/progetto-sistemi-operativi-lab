@@ -27,6 +27,7 @@ fileEntry* deep_copy_file(fileEntry* r);
 
 void free_filesystem();
 void init_filesystem();
+void filesystem_handle_connectionClosed(session* closedClient);
 void close_filesystem_pending_locks();
 request* filesystem_getClientToNotify();
 
@@ -34,5 +35,9 @@ bool filesystem_fileExists(char* pathname);
 
 fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flags);
 fileEntry* filesystem_get_fileEntry(char* pathname);
+fileEntry** filesystem_get_n_fileEntry(int* dim, int n);
 fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f);
+fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry* f);
 int filesystem_lockAcquire(request* r, char* pathname);
+int filesystem_lockRelease(request* r, char* pathname);
+int filesystem_removeFile(request* r, char* pathname);

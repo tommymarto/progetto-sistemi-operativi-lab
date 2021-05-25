@@ -14,10 +14,9 @@ int isFileOpened(session* self, char* pathname) {
     return -1;
 }
 
-void init_session(session* s, int clientFd) {
-    s->clientFd = clientFd;
-    s->isActive = true;
+void init_session(session* s) {
     s->opStatus = false;
+    s->pathnamePendingLock = NULL;
 
     for(int i=0; i<MAX_OPENED_FILES; i++) {
         s->openedFiles[i] = NULL;
@@ -28,12 +27,14 @@ void init_session(session* s, int clientFd) {
 }
     
 void clear_session(session* s) {
-    s->isActive = false;
+    s->opStatus = false;
     for(int i=0; i<MAX_OPENED_FILES; i++) {
         free(s->openedFiles[i]);
         s->openedFiles[i] = NULL;
         s->canWriteOnFile[i] = false;
     }
+    free(s->pathnamePendingLock);
+    s->pathnamePendingLock = NULL;
 }
 
 int getFreeFileDescriptor(session* s) {

@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <args.h>
 
 #include <logging.h>
@@ -5,11 +7,24 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include <errno.h>
 
-extern int errno;
-
 #define logFoundWithParams "found option %s with argument %s"
+
+extern int errno;
+extern int logging_level;
+
+config configs = {
+    .cachePolicy = DEFAULT_CACHE_POLICY,
+    .socketFileName =  DEFAULT_SOCKET_FILENAME,
+    .nThreadWorkers = DEFAULT_N_THREAD_WORKERS,
+    .maxMemorySize = DEFAULT_MAX_MEMORY_SIZE_MB,
+    .maxFileCount = DEFAULT_MAX_FILE_COUNT,
+    .maxFileSize = DEFAULT_MAX_FILE_SIZE,
+    .maxClientsConnected = DEFAULT_MAX_CLIENTS,
+    .logVerbosity = DEFAULT_LOG_VERBOSITY
+};
 
 int fpeek(FILE *stream) {
     int c = fgetc(stream);
@@ -92,4 +107,63 @@ void parseFileArguments(char* configFileName, config* configs) {
     log_info("closing the configuration file");
     fclose(configFile);
     log_info("configuration file closed");
+}
+
+void handleConfiguration(int argc, char* argv[]) {
+    // read configuration
+    char* configFile = DEFAULT_CONFIGURATION_FILE;
+
+    if(argc >= 2) {
+        log_info("using command line argument as configuration file path");
+        configFile = argv[1];
+    } else {
+        // default implementation reads config file in the same folder of the executable
+        log_info("using default configuration file path");
+        
+        char buff[1024];
+        int len = strlen(DEFAULT_CONFIGURATION_FILE);
+        ssize_t sz = readlink("/proc/self/exe", buff, sizeof(buff));
+        if(sz == -1) {
+            log_error("cannot read current path, using default configuration");
+            return;
+        } else {
+            while(buff[--sz] != '/') {}
+
+            if(len + sz + 2 >= 1024) {
+                log_error("cannot read current path, using default configuration");
+                return;
+            } else {
+                strcpy(buff + sz, "/" DEFAULT_CONFIGURATION_FILE);
+                buff[sz + len + 2] = '\0';
+                configFile = buff;
+            }
+        }
+    }
+
+    
+
+    log_info("trying to read configuration file %s", configFile);
+    parseFileArguments(configFile, &configs);
+
+    // handle max fd_set size and the special value 0
+    configs.maxClientsConnected = configs.maxClientsConnected == 0 ? DEFAULT_MAX_CLIENTS : MIN(configs.maxClientsConnected, DEFAULT_MAX_CLIENTS);
+
+    // handle verbosity level
+    switch (configs.logVerbosity) {
+        case 2: {
+            logging_level = FATAL | ERROR | MESSAGE | OPERATION | INFO;
+            break;
+        }
+        case 1: {
+            logging_level = FATAL | ERROR | MESSAGE | OPERATION;
+            break;
+        }
+        case 0: {
+            logging_level = FATAL | ERROR;
+            break;
+        }
+        default: {
+            log_error("invalid argument for logging verbosity. Proceeding with the default value");
+        }
+    }
 }

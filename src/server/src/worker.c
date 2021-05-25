@@ -5,14 +5,23 @@
 #include <operations.h>
 #include <comunication.h>
 #include <requestqueue.h>
+#include <intqueue.h>
 #include <files.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
 
-extern volatile sig_atomic_t threadExit;
-extern request_queue requestQueue;
+extern bool threadExit();
+void setFdToSet(int fd);
+extern void handleSockClose(int fd);
+extern int_queue requestQueue;
+extern session sessions[];
+
+
+//
+//  utils
+//
 
 // returns -1 for errors or the number of bytesWritten
 int writeMessage(int n, char** content, int* sizes, int fd) {
@@ -75,105 +84,190 @@ int writeFileArray(int dim, fileEntry* files[], int clientFd) {
     return result;
 }
 
+// returns -2 if read less then expected, -1 if errors, 0 if client disconnected or the number of bytes read
+int readMessage(int fd, char** msgBuf, int* bufLen) {
+    int bytesRead, totalBytesRead = 0;
+
+    *msgBuf = NULL;
+
+    // read size of payload
+    char headerBuf[4];
+    int msgSize;
+    bytesRead = readn_unless_condition(fd, headerBuf, sizeof(int), threadExit);
+
+    if(bytesRead == -1 || bytesRead == 0) {
+        return bytesRead;
+    } else if(bytesRead < sizeof(int)) {
+        return -2;
+    }
+    totalBytesRead += sizeof(int);
+    msgSize = deserializeInt(headerBuf);
+    log_info("found message length: %d", msgSize);
+
+    *bufLen = msgSize;
+
+    // read actual payload
+    log_info("reading actual payload...");
+    *msgBuf = _malloc(sizeof(char) * (msgSize + 1));
+    bytesRead = readn_unless_condition(fd, *msgBuf, sizeof(char) * msgSize, threadExit);
+    if(bytesRead == -1 || bytesRead == 0) {
+        return bytesRead;
+    } else if(bytesRead < msgSize) {
+        return -2;
+    }
+    totalBytesRead += bytesRead;
+    (*msgBuf)[msgSize] = '\0';
+
+    return totalBytesRead;
+}
+
+//
+//  workers
+//
+
+// request handler
+int worker_body(request* r) {
+    fileEntry** files = NULL;
+    int result, dim = 0;
+
+    switch (r->kind) {
+        case 'o': {
+            files = openFile(r, &result, &dim, r->file->pathname, r->flags);
+            break;
+        }
+        case 'r': {
+            files = readFile(r, &result, &dim, r->file->pathname);
+            break;
+        }
+        case 'n': {
+            files = readNFiles(r, &result, &dim, r->flags);
+            break;
+        }
+        case 'w': {
+            files = writeFile(r, &result, &dim, r->file);
+            break;
+        }
+        case 'a': {
+            files = appendToFile(r, &result, &dim, r->file);
+            break;
+        }
+        case 'l': {
+            result = lockFile(r, r->file->pathname);
+            break;
+        }
+        case 'u': {
+            result = unlockFile(r, r->file->pathname);
+            break;
+        }
+        case 'c': {
+            result = closeFile(r, r->file->pathname);
+            break;
+        }
+        case 'R': {
+            result = removeFile(r, r->file->pathname);
+            break;
+        }
+        default: {
+            log_error("unhandled request type '%c', dropping request", r->kind);
+            result = -1;
+        }
+    }
+    
+    // ignore result == 0 because it will be handled by the notifier
+    if(result < 0) {
+        // return error
+        pingKo(r->client->clientFd);
+    } else if(dim == 0) {
+        pingOk(r->client->clientFd);
+    } else {
+        writeFileArray(dim, files, r->client->clientFd);
+    }
+
+    if(files != NULL) {
+        for(int i=0; i<dim; i++) {
+            if(files[i] != NULL) {
+                free(files[i]->buf);
+            }
+            free(files[i]);
+        }
+    }
+    free(files);
+
+    return result;
+}
+
 void* worker_start(void* arg) {
     int* threadId = (int*)arg;
 
-    log_info("spawned worker");
-    while(!threadExit) {
-        request* r = remove_request_queue(&requestQueue);
-        if(r == NULL) {
+    log_info("spawned worker %d", *threadId);
+    while(!threadExit()) {
+        int fd = remove_int_queue(&requestQueue);
+        if(fd == -1) {
             continue;
         }
-        log_info("request '%c', served by worker %d", r->kind, *threadId);
 
-        fileEntry** files = NULL;
-        int result, dim = 0;
-
-        switch (r->kind) {
-            case 'o': {
-                files = openFile(r, &result, &dim, r->file->pathname, r->flags);
-                break;
-            }
-            case 'r': {
-                files = readFile(r, &result, &dim, r->file->pathname);
-                break;
-            }
-            case 'n':
-            case 'w': {
-                files = writeFile(r, &result, &dim, r->file);
-                break;
-            }
-            case 'a':
-            case 'l':
-            case 'u':
-            case 'c': {
-                result = closeFile(r, r->file->pathname);
-                break;
-            }
-            case 'R':
-            default: {
-                log_error("unhandled request type '%c', dropping request", r->kind);
-                r->free(r);
-                continue;
-            }
+        char* msgBuf = NULL;
+        int bufLen;
+        int bytesRead = readMessage(fd, &msgBuf, &bufLen);
+        if(bytesRead == -2) {
+            // this should only happen when readn is interrupted by a signal so the condition (threadExit) is set
+            log_info("read less then expected bytes, dropping message");
+            free(msgBuf);
+            continue;
+        } if(bytesRead == -1) {
+            log_error("failed read from client %d", fd);
+            free(msgBuf);
+            continue;
+        } else if (bytesRead == 0) {
+            // client has disconnected
+            free(msgBuf);
+            filesystem_handle_connectionClosed(sessions + fd);
+            handleSockClose(fd);
+            continue;
         }
 
-        // ignore result == 0 because it will be handled by the notifier
-        if(result < 0) {
-            // return error
-            pingKo(r->client->clientFd);
-            r->free(r);
-        } else if(result == 1) {
-            pingOk(r->client->clientFd);
-            r->free(r);
-        } else if(result == 2 || result == 3) {
-            if(dim > 0) {
-                writeFileArray(dim, files, r->client->clientFd);
-            } else {
-                pingOk(r->client->clientFd);
-            }
+        request* r = new_request(msgBuf, bufLen, sessions + fd);
+        log_info("worker %d received message of kind '%c'", *threadId, r->kind);
 
-            if(result == 2) {
+        int result = worker_body(r);
+
+        if(result != 0) {
+            if(result == -1 || result == 1) {
+                r->free(r);
+            } else if(result == 2) {
                 r->free_keep_file_content(r);
-            } else if(result == 3) {
-                r->free(r);
             }
+            setFdToSet(fd);
         }
 
-        if(files != NULL) {
-            for(int i=0; i<dim; i++) {
-                if(files[i] != NULL) {
-                    free(files[i]->buf);
-                }
-                free(files[i]);
-            }
-        }
-        free(files);
-
+        log_info("worker %d, request completed", *threadId);
     }
 
     free(threadId);
     return NULL;
 }
 
+// notifier
 void* worker_notify(void* arg) {
     log_info("spawned worker notify");
-    while(!threadExit) {
+    while(!threadExit()) {
         request* r = filesystem_getClientToNotify();
         if(r == NULL) {
             continue;
         }
 
         log_info("notifying client");
-
         bool status = r->client->opStatus;
         if(status) {
             pingOk(r->client->clientFd);
-            r->free_keep_file_content(r);
-        } else {
+            // r->free_keep_file_content(r);
+            r->free(r);
+        } else {            
             pingKo(r->client->clientFd);
             r->free(r);
         }
+
+        setFdToSet(r->client->clientFd);
     }
 
     return NULL;
