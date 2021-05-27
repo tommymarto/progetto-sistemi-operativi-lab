@@ -193,10 +193,12 @@ int worker_body(request* r, int* bytesWritten) {
     if(result < 0) {
         // return error
         *bytesWritten = pingKo(r->client->clientFd);
-    } else if(dim == 0) {
-        *bytesWritten = pingOk(r->client->clientFd);
-    } else {
-        *bytesWritten = writeFileArray(dim, files, r->client->clientFd);
+    } else if(result > 0) {
+        if(dim == 0) {
+            *bytesWritten = pingOk(r->client->clientFd);
+        } else {
+            *bytesWritten = writeFileArray(dim, files, r->client->clientFd);
+        }
     }
 
     if(files != NULL) {
@@ -268,7 +270,7 @@ void* worker_start(void* arg) {
             writeToPipe(1, fd);
         }
 
-        log_info("worker %d, request completed with status", *threadId, result);
+        log_info("worker %d, request completed with status %d", *threadId, result);
     }
 
     free(threadId);

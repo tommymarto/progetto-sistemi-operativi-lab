@@ -1,9 +1,9 @@
 
 CC			=  gcc
-CFLAGS	    += -std=c11 -Wall -Werror -pedantic-errors -Wno-unused-function
+CFLAGS	    += -std=c11 -Wall -Werror -pedantic-errors -Wno-unused-function -Wno-unused-result
 INCLUDES	= -I ../common/include -I ../api/include -I ./include
 LDFLAGS 	=
-OPTFLAGS	= -g
+OPTFLAGS	= -O1
 MAKEFLAGS 	+= -s
 
 API_LIB = -L../api/bin -Wl,-rpath=$(PWD)/bin/api/bin -lapi
