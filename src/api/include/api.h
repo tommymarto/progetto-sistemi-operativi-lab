@@ -22,6 +22,8 @@ int closeConnection(const char* sockname);
 
 // request kind: 'o'
 int openFile(const char* pathname, int flags);
+// request kind: 'o'
+int betterOpenFile(const char* pathname, int flags, const char* dirname);
 // request kind: 'r'
 int readFile(const char* pathname, void** buf, size_t* size);
 // request kind: 'n'

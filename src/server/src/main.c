@@ -5,7 +5,7 @@
 #include <intqueue.h>
 #include <mymalloc.h>
 #include <files.h>
-
+#include <comunication.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
@@ -27,17 +27,15 @@ extern config configs;
 
 session sessions[DEFAULT_MAX_CLIENTS];
 int_queue requestQueue;
+int pipeFds[2];
 
 static char* socketFileName = NULL;
 int sockfd = -1;
 volatile sig_atomic_t mainExitSig = false;
 volatile sig_atomic_t threadExitSig = false;
+volatile sig_atomic_t sighupReceived = false;
 pthread_rwlock_t threadExitSigLock = PTHREAD_RWLOCK_INITIALIZER;
 typedef struct sigaction sig_act_t;
-
-fd_set set;
-int maxFds;
-pthread_mutex_t setLock = PTHREAD_MUTEX_INITIALIZER;
 
 
 bool threadExit() {
@@ -49,9 +47,11 @@ bool threadExit() {
 }
 
 static void signalHandler(int signum) {
-    mainExitSig = true;
     if(signum == SIGINT || signum == SIGQUIT) {
+        mainExitSig = true;
         threadExitSig = true;
+    } else if(signum == SIGHUP) {
+        sighupReceived = true;
     }
 }
 
@@ -110,43 +110,6 @@ void setupServerSocket() {
     }
 }
 
-void setFdToSet(int fd) {
-    pthread_mutex_lock(&setLock);
-    
-    FD_SET(fd, &set);
-    maxFds = MAX(maxFds, fd);
-    
-    pthread_mutex_unlock(&setLock);
-}
-
-void clearFdFromSet(int fd) {
-    pthread_mutex_lock(&setLock);
-    
-    FD_CLR(fd, &set);
-
-    // use fstat to find the highest opened fd
-    struct stat statbuf;
-    while(fstat(maxFds, &statbuf) == -1) {
-        maxFds--;
-    }
-
-    pthread_mutex_unlock(&setLock);
-}
-
-void handleSockClose(int fd) {
-    pthread_mutex_lock(&setLock);
-
-    log_info("cleaning filesystem");
-    filesystem_handle_connectionClosed(sessions + fd);
-    log_info("clearing session");
-    clear_session(sessions + fd);
-    
-    log_info("closing connection with client %d", fd);
-    close(fd);
-
-    pthread_mutex_unlock(&setLock);
-}
-
 void cleanup() {
     log_info("final cleanup");
     log_info("flushing streams...");
@@ -160,13 +123,17 @@ void cleanup() {
         unlink(socketFileName);
     }
     free(socketFileName);
+    if(configs.logFileOutput != NULL) {
+        fclose(configs.logFileOutput);
+    }
     log_info("cleanup done");
     log_info("terminating");
+    log_report("server closed");
 }
 
 int main(int argc, char *argv[]) {
     atexit(cleanup);
-    logging_level |= INFO;
+    logging_level |= REPORT;
     
     // configure signal handling
     setSignalHandlers();
@@ -181,14 +148,23 @@ int main(int argc, char *argv[]) {
     init_int_queue(&requestQueue);
     init_filesystem();
 
+    // setup pipe for worket-to-main comunication
+    if(pipe(pipeFds) < 0) {
+        log_fatal("unable to create pipe...");
+        log_fatal("exiting the program...");
+        exit(EXIT_FAILURE);
+    }
+
     // setup socket
     setupServerSocket();
     
     // setup main vars
-    maxFds = sockfd;
-    fd_set rdset;
+    int _maxFds = MAX(sockfd, MAX(pipeFds[0], pipeFds[1]));
+    fd_set set, rdset;
     FD_ZERO(&set);
     FD_SET(sockfd, &set);
+    FD_SET(pipeFds[0], &set);
+    FD_SET(pipeFds[1], &set);
 
     // spawn workers
     pthread_t notifier;
@@ -209,17 +185,23 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    int clientsConnected = 0;
+    int maxClientsConnected = 0;
+
+    log_report("server up and running");
+
     // main loop
     while(!mainExitSig) {
-        int _maxFds;
-        pthread_mutex_lock(&setLock);
         rdset = set;
-        _maxFds = maxFds;
-        pthread_mutex_unlock(&setLock);
+
+        // handle sighup soft termination
+        if(clientsConnected == 0 && sighupReceived) {
+            mainExitSig = true;
+            continue;
+        }
 
         // accept incoming connections
-        struct timeval timeout = { .tv_sec = 0, .tv_usec = 10000 };
-        int readyDescriptors = select(_maxFds + 1, &rdset, NULL, NULL, &timeout);
+        int readyDescriptors = select(_maxFds + 1, &rdset, NULL, NULL, NULL);
         if(readyDescriptors == -1) {
             if(errno != EINTR) {
                 log_error("select error");
@@ -238,13 +220,57 @@ int main(int argc, char *argv[]) {
                         log_error("unable to accept connection from socket");
                         continue;
                     }
+
+                    boring_file_log(configs.logFileOutput, "fd: %d newConnection", conn);
+
+
+                    clientsConnected++;
+                    maxClientsConnected = MAX(maxClientsConnected, clientsConnected);
+
                     log_info("connection accepted. Descriptor #%d", conn);
                     init_session(sessions + conn);
                     log_info("session initialized");
 
-                    setFdToSet(conn);
+                    FD_SET(conn, &set);
+                    _maxFds = MAX(_maxFds, conn);
+                } else if(fd == pipeFds[0]) {
+                    char msg[8];
+                    readn(fd, msg, sizeof(int) * 2);
+
+                    int msgKind = deserializeInt(msg);
+                    int msgFd = deserializeInt(msg + 4);
+
+                    switch(msgKind) {
+                        case 0: { // signal client closed
+                            clientsConnected--;
+                            
+                            boring_file_log(configs.logFileOutput, "fd: %d connectionClosed", msgFd);
+
+                            log_info("cleaning filesystem");
+                            filesystem_handle_connectionClosed(sessions + msgFd);
+                            log_info("clearing session");
+                            clear_session(sessions + msgFd);
+                            
+                            log_info("closing connection with client %d", msgFd);
+                            close(msgFd);
+                            break;
+                        }
+                        case 1: { // signal restore client fd in fdset
+                            log_info("reactivating client %d", msgFd);
+                            FD_SET(msgFd, &set);
+                            _maxFds = MAX(_maxFds, msgFd);
+                            break;
+                        }
+                    }
                 } else {
-                    clearFdFromSet(fd);
+                    // remove fd from set so nobody can read except the thread that will handle the request                    
+                    FD_CLR(fd, &set);
+
+                    // use fstat to find the highest opened fd
+                    struct stat statbuf;
+                    while(fstat(_maxFds, &statbuf) == -1) {
+                        _maxFds--;
+                    }
 
                     insert_int_queue(&requestQueue, fd);
                 }
@@ -279,6 +305,7 @@ int main(int argc, char *argv[]) {
     for(int i=0; i<DEFAULT_MAX_CLIENTS; i++) {
         clear_session(sessions + i);
     }
+    boring_file_log(configs.logFileOutput, "maxClientsConnected: %d", maxClientsConnected);
     log_info("terminating...");
     return 0;
 }

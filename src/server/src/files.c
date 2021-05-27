@@ -1,6 +1,9 @@
 #include <files.h>
 
 #include <mymalloc.h>
+#include <caching.h>
+#include <logging.h>
+#include <configuration.h>
 #include <requestqueue.h>
 #include <pthread.h>
 #include <string.h>
@@ -8,6 +11,8 @@
 
 #define HASHTABLE_SIZE 4096
 #define MAX_CLIENTS_WAITING_FOR_LOCK 32
+
+extern config configs;
 
 typedef struct hashEntry hashEntry;
 struct hashEntry {
@@ -39,6 +44,24 @@ unsigned long hash(unsigned char *str) {
     return hash;
 }
 
+static void printStats() {
+    log_report("╔═══════════════════════════════════════════════");
+    log_report("║ FILESYSTEM USAGE ADDITIONAL INFO:             ");
+    log_report("║                                               ");
+    log_report("║ List of files still stored:                   ");
+
+    for(int i=0; i<HASHTABLE_SIZE; i++) {
+        hashEntry* e = filesystem[i];
+        while(e != NULL) {
+            log_report("║ - %s %d", e->file->pathname, i);
+            e = e->next;
+        }
+    }
+
+    log_report("║                                               ");
+    log_report("╚═══════════════════════════════════════════════");
+}
+
 fileEntry* deep_copy_file(fileEntry* f) {
     fileEntry* result = _malloc(sizeof(fileEntry));
     memcpy(result, f, sizeof(fileEntry));
@@ -57,6 +80,37 @@ void free_hashEntry(hashEntry* e) {
     free(e->file->buf);
     free(e->file);
     free(e);
+}
+
+void free_hashEntry_keep_file(hashEntry* e) {
+    free(e);
+}
+
+// must be called only when the appropriate lock is acquired
+static hashEntry* remove_hashEntry_ref(char* pathname, int hashIndex, bool keepFile) {
+    // search for entry in the table
+    hashEntry* current = filesystem[hashIndex];
+    hashEntry* prev = NULL;
+    while(current != NULL && strcmp(current->file->pathname, pathname) != 0) {
+        prev = current;
+        current = current->next;
+    }
+
+    if(current != NULL) {
+        if(prev == NULL) {
+            filesystem[hashIndex] = current->next;
+        } else {
+            prev->next = current->next;
+        }
+
+        if(keepFile) {
+            free_hashEntry_keep_file(current);
+        } else {
+            free_hashEntry(current);
+        }
+    }
+
+    return current;
 }
 
 // must be called only when the appropriate lock is acquired
@@ -212,6 +266,7 @@ void clean_pending_lock_request(session* client, bool needToNotify) {
 
 void init_filesystem() {
     init_request_queue(&clientsToNotify);
+    initCachingSystem();
 }
 
 void filesystem_handle_connectionClosed(session* closedClient) {
@@ -234,6 +289,9 @@ void filesystem_handle_connectionClosed(session* closedClient) {
 }
 
 void free_filesystem() {
+    freeCachingSystem();
+    printStats();
+
     for(int i=0; i<HASHTABLE_SIZE; i++) {
         hashEntry* e = filesystem[i];
         while(e != NULL) {
@@ -242,6 +300,7 @@ void free_filesystem() {
             e = nextE;
         }
     }
+
     free_request_queue(&clientsToNotify);
 }
 
@@ -276,25 +335,36 @@ fileEntry* filesystem_get_fileEntry(char* pathname) {
 }
 
 fileEntry** filesystem_get_n_fileEntry(int* dim, int n) {
-    // // get bucket index
-    // int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
+    fileEntry** cacheBuffer;
+    int head;
+    int count = getCacheBuffer(&cacheBuffer, &head);
 
-    // fileEntry* result = NULL;
+    if(n == 0) {
+        n = count;
+    }
+    
+    // reservoir sampling
+    int elements[n];
+    for(int i=0; i<n; i++) {
+        elements[i] = i;
+    }
 
-    // // acquire bucket lock in read mode
-    // pthread_rwlock_rdlock(&tableLock);
+    srand(time(NULL));
 
-    // fileEntry* f = get_fileEntry_ref(pathname, index);
+    for(int i=n; i<count; i++) {
+        int j = rand() % i;
+        if(j < n) {
+            elements[j] = i;
+        }
+    }
+    
+    *dim = n;
 
-    // // copy out result
-    // if(f != NULL) {
-    //     result = deep_copy_file(f);
-    // }
-
-    // pthread_rwlock_unlock(&tableLock);
-
-    // return result;
-    return NULL;
+    fileEntry** result = _malloc(sizeof(fileEntry*) * n);
+    for(int i=0; i<n; i++) {
+        result[i] = deep_copy_file(cacheBuffer[(head + elements[i]) % configs.maxFileCount]);
+    }
+    return result;
 }
 
 bool filesystem_fileExists(char* pathname) {
@@ -317,6 +387,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
     unsigned int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
 
     bool failed = false;
+    fileEntry* fileExpelled = NULL;
     *result = 1;
 
     session* client = r->client;
@@ -328,54 +399,66 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         pthread_rwlock_wrlock(&tableLock);
     }
 
-    if(isFileOpened(client, pathname) == -1) {
-        if(isFileOpened(client, pathname) != -1) {
-            if(flags & O_CREATE) {
-                failed = true;
-            }
-        }
+    int indexOfFile = isFileOpened(client, pathname);
 
-        int descriptor = getFreeFileDescriptor(client);
-        if(descriptor == -1) {
+    // if file already opened and O_CREATE -> error
+    if(indexOfFile != -1 && (flags & O_CREATE)) {
+        failed = true;
+    }
+
+    
+    int descriptor = getFreeFileDescriptor(client);
+    if(descriptor == -1) {
+        failed = true;
+    }
+
+    if((flags & O_CREATE) && !failed) {
+        // prepare dummy content
+        int pathnameLen = strlen(pathname);
+        int bufSize = pathnameLen + 1;
+        char* buf = _malloc(sizeof(char) * bufSize);
+        memcpy(buf, pathname, pathnameLen);
+        buf[pathnameLen] = '\0';
+
+        fileEntry* f = _malloc(sizeof(fileEntry));
+        f->owner = -1;
+        f->buf = buf;
+        f->bufLen = bufSize;
+        f->pathname = buf;
+        f->pathlen = pathnameLen;
+        f->content = buf + pathnameLen;
+        f->length = 0;
+
+        // handle caching
+        fileExpelled = handleInsertion(f);
+
+        if(fileExpelled != NULL) {
+            // get bucket index
+            unsigned int expelledIndex = hash((unsigned char*)fileExpelled->pathname) % HASHTABLE_SIZE;
+            remove_hashEntry_ref(fileExpelled->pathname, expelledIndex, true);
+        }
+        
+
+        failed = !put_fileEntry_ref(f, index);
+
+        if(failed) {
+            free(buf);
+            free(f);
+        }
+    } else {
+        failed = failed && (get_fileEntry_ref(pathname, index) == NULL);
+    }
+
+    if((flags & O_LOCK) && !failed) {
+        *result = lockfile(r, pathname, index, descriptor);
+
+        if(*result != 1) {
             failed = true;
         }
+    }
 
-        if((flags & O_CREATE) && !failed) {
-            // prepare dummy content
-            int pathnameLen = strlen(pathname);
-            int bufSize = pathnameLen + 1;
-            char* buf = _malloc(sizeof(char) * bufSize);
-            strncpy(buf, pathname, pathnameLen);
-            buf[pathnameLen] = '\0';
-
-            fileEntry* f = _malloc(sizeof(fileEntry));
-            f->owner = -1;
-            f->buf = buf;
-            f->bufLen = bufSize;
-            f->pathname = buf;
-            f->pathlen = pathnameLen;
-            f->content = buf + pathnameLen;
-            f->length = 0;
-
-            failed = !put_fileEntry_ref(f, index);
-
-            if(failed) {
-                free(buf);
-                free(f);
-            }
-        } else if(!failed) {
-            failed = get_fileEntry_ref(pathname, index) == NULL;
-        }
-
-        if((flags & O_LOCK) && !failed) {
-            *result = lockfile(r, pathname, index, descriptor);
-
-            if(*result != 1) {
-                failed = true;
-            }
-        }
-
-        if(!failed) {
+    if(!failed) {
+        if(get_fileEntry_ref(pathname, index) != NULL) {
             int pathLen = strlen(pathname);
             client->openedFiles[descriptor] = _malloc(sizeof(char) * (pathLen + 1));
             strncpy(client->openedFiles[descriptor], pathname, pathLen);
@@ -384,6 +467,8 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
             if((flags & O_CREATE) && (flags & O_LOCK)) {
                 client->canWriteOnFile[descriptor] = true;
             }
+        } else {
+            failed = true;
         }
     }
 
@@ -391,7 +476,9 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
 
     *result = failed ? -1 : *result;
 
-    return NULL;
+    // printStats();
+
+    return fileExpelled;
 }
 
 fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f) {
@@ -399,6 +486,9 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
     int index = hash((unsigned char*)f->pathname) % HASHTABLE_SIZE;
 
     session* client = r->client;
+
+    fileEntry** filesToRemove = NULL; 
+    *dim = 0;
 
     *result = -1;
 
@@ -409,6 +499,17 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
     if(fileToWrite != NULL && fileToWrite->owner == client->clientFd) {
         int descriptor = isFileOpened(client, f->pathname);
         if(descriptor != -1 && client->canWriteOnFile[descriptor]) {
+
+            // update cache
+            filesToRemove = handleEdit(dim, fileToWrite, f->length);
+            
+            // remove files from filesystem before the insertion
+            for(int i=0; i<*dim; i++) {
+                // get bucket index
+                int removeIndex = hash((unsigned char*)filesToRemove[i]->pathname) % HASHTABLE_SIZE;
+                remove_hashEntry_ref(filesToRemove[i]->pathname, removeIndex, true);
+            }
+
             // shallow copy file
             free(fileToWrite->buf);
 
@@ -426,9 +527,9 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
 
     pthread_rwlock_unlock(&tableLock);
 
-    *dim = 0;
+    // printStats();
 
-    return NULL;
+    return filesToRemove;
 }
 
 fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry* f) {
@@ -436,6 +537,9 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
     int index = hash((unsigned char*)f->pathname) % HASHTABLE_SIZE;
 
     session* client = r->client;
+
+    fileEntry** filesToRemove = NULL;
+    *dim = 0;
 
     *result = -1;
 
@@ -446,14 +550,35 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
     if(descriptor != -1) {
         fileEntry* fileToEdit = get_fileEntry_ref(f->pathname, index);
         if(fileToEdit != NULL) {
-            // resize underlying buffer and copy content
-            int newSize = fileToEdit->bufLen + f->length;
-            fileToEdit->buf = _realloc(fileToEdit->buf, sizeof(char) * (newSize + 1));
-            fileToEdit->bufLen += f->length;
-            fileToEdit->buf[newSize] = '\0';
+            // calculate offsets
+            int pathOffset = fileToEdit->pathname - fileToEdit->buf;
+            int contentOffset = fileToEdit->content - fileToEdit->buf;
 
-            strncpy(fileToEdit->content + fileToEdit->length, f->content, f->length);
-            fileToEdit->content += f->length;
+            // calculate new sizes
+            int newSize = fileToEdit->bufLen + f->length;
+            int newContentLength = fileToEdit->length + f->length;
+
+            // update cache
+            filesToRemove = handleEdit(dim, fileToEdit, newContentLength);
+            
+            // remove files from filesystem before the insertion
+            for(int i=0; i<*dim; i++) {
+                // get bucket index
+                int removeIndex = hash((unsigned char*)filesToRemove[i]->pathname) % HASHTABLE_SIZE;
+                remove_hashEntry_ref(filesToRemove[i]->pathname, removeIndex, true);
+            }
+
+            // resize underlying buffer and copy content
+            fileToEdit->buf = _realloc(fileToEdit->buf, sizeof(char) * (newSize + 1));
+            fileToEdit->bufLen = newSize;
+            fileToEdit->buf[newSize] = '\0';
+            
+            // fix pointers changed due to realloc
+            fileToEdit->pathname = fileToEdit->buf + pathOffset;
+            fileToEdit->content = fileToEdit->buf + contentOffset;
+
+            memcpy(fileToEdit->content + fileToEdit->length, f->content, f->length);
+            fileToEdit->length = newContentLength;
             
             client->canWriteOnFile[descriptor] = false;
 
@@ -463,9 +588,9 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
 
     pthread_rwlock_unlock(&tableLock);
 
-    *dim = 0;
+    // printStats();
 
-    return NULL;
+    return filesToRemove;
 }
 
 int filesystem_lockAcquire(request* r, char* pathname) {
@@ -552,12 +677,17 @@ int filesystem_removeFile(request* r, char* pathname) {
                     insert_request_queue(&clientsToNotify, nextOwner);
                 }
 
+                handleRemoval(h->file);
+                remove_hashEntry_ref(pathname, index, false);
+
                 result = 1;
             }
         }
     }
 
     pthread_rwlock_unlock(&tableLock);
+
+    // printStats();
 
     return result;
 }

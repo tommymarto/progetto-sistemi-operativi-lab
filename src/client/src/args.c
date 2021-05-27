@@ -35,6 +35,7 @@ extern int optind, optopt;
     -l file1[,file2]
     -u file1[,file2]
     -c file1[,file2]
+    -a file1[,file2]
 */
 
 void handleSingleParameterWithExtra(vector_request* requests, char request_type, char* arg, int extra, int index) {
@@ -67,7 +68,7 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
     bool tFound = false;
 
     int opt, index=0;
-    while ((opt = getopt(argc, argv, ":hpf:w:W:d:D:r:R:t:l:u:c:")) != -1)
+    while ((opt = getopt(argc, argv, ":hpf:w:W:d:D:r:R:t:l:u:c:a:")) != -1)
     {
         switch (opt) {
             case '?': {
@@ -130,7 +131,8 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
             case 'r':
             case 'l':
             case 'u':
-            case 'c': {
+            case 'c':
+            case 'a': {
                 log_info(logFoundWithParams, opt, optarg);
                 handleMultipleParameters(requests, opt, optarg, index);
                 break;
@@ -167,19 +169,19 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 break;
             }
             case 'R': {
-                if(!argumentValid()) {
-                    long tmp;
-                    if(!strToInt(optarg, &tmp)) {
-                        log_error("option 'R' optional argument expected to be int");
-                        break;
-                    }
+                long tmp;
 
+                if(!argumentValid()) {
                     log_info(logFound, opt);
                     log_info(usingDefaultValue, opt);
-
-                    handleSingleParameterWithExtra(requests, opt, "", (int)tmp, index);
+                    tmp = 0;
+                } else if(!strToInt(optarg, &tmp)) {
+                    log_error("option 'R' optional argument expected to be int");
                     break;
                 }
+                
+                handleSingleParameterWithExtra(requests, opt, "", (int)tmp, index);
+                break;
             }
             case 'd':
             case 'D': {

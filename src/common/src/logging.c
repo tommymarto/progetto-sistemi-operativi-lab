@@ -32,12 +32,28 @@ static inline void logger(FILE* stream, const char* type, const char* fmt, va_li
     pthread_mutex_unlock(&printMutex);
 }
 
+void boring_file_log(FILE* stream, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+
+    logger(stream, "LOG", fmt, args);
+}
+
 void log_info_stream(FILE* stream, const char* fmt, ...) {
     if(logging_level & INFO) {
         va_list args;
         va_start(args, fmt);
 
         logger(stream, COLORIZE(CYAN, "INFO"), fmt, args);
+    }
+}
+
+void log_report_stream(FILE* stream, const char* fmt, ...) {
+    if(logging_level & REPORT) {
+        va_list args;
+        va_start(args, fmt);
+
+        logger(stream, COLORIZE(GREEN, "REPORT"), fmt, args);
     }
 }
 
@@ -50,12 +66,12 @@ void log_operation_stream(FILE* stream, const char* fmt, ...) {
     }
 }
 
-void log_message_stream(FILE* stream, const char* fmt, ...) {
-    if(logging_level & MESSAGE) {
+void log_warn_stream(FILE* stream, const char* fmt, ...) {
+    if(logging_level & WARN) {
         va_list args;
         va_start(args, fmt);
 
-        logger(stream, COLORIZE(GREEN, "MESSAGE"), fmt, args);
+        logger(stream, COLORIZE(YELLOW, "WARN"), fmt, args);
     }
 }
 

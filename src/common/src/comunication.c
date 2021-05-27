@@ -2,6 +2,8 @@
 
 #include <unistd.h>
 #include <errno.h>
+#include <logging.h>
+#include <string.h>
 #include <stdbool.h>
 
 void serializeInt(char* dest, int content) {
@@ -16,15 +18,11 @@ int deserializeInt(char* src) {
     return (actualSrc[3] << 24) | (actualSrc[2] << 16) | (actualSrc[1] << 8) | actualSrc[0];
 }
 
-bool dummyCondition() {
-    return false;
-}
-
 // reads n bytes from fd unless condition becomes true
-ssize_t readn_unless_condition(int fd, char *ptr, size_t bytesToRead, bool (*condition)()) {
+ssize_t readn(int fd, char *ptr, size_t bytesToRead) {
     ssize_t bytesRead = 0;
  
-    while (bytesRead < bytesToRead && !condition()) {
+    while (bytesRead < bytesToRead) {
         ssize_t currentRead = read(fd, ptr, bytesToRead - bytesRead);
         
         // handle EOF reached and error occourred
@@ -32,6 +30,7 @@ ssize_t readn_unless_condition(int fd, char *ptr, size_t bytesToRead, bool (*con
             if(errno == EINTR) {
                 continue;
             }
+            log_error("%s", strerror(errno));
             return -1;
         } else if(currentRead == 0) {
             return 0;
@@ -44,17 +43,12 @@ ssize_t readn_unless_condition(int fd, char *ptr, size_t bytesToRead, bool (*con
     // success
     return bytesRead;
 }
-
-ssize_t readn(int fd, char *ptr, size_t bytesToRead) {
-    // forward call
-    return readn_unless_condition(fd, ptr, bytesToRead, dummyCondition);
-}
  
 // writes n bytes from fd unless condition becomes true
-ssize_t writen_unless_condition(int fd, char *ptr, size_t bytesToWrite, bool (*condition)()) {
+ssize_t writen(int fd, char *ptr, size_t bytesToWrite) {
     ssize_t bytesWritten = 0;
  
-    while (bytesWritten < bytesToWrite && !condition()) {
+    while (bytesWritten < bytesToWrite) {
         ssize_t currentWritten = write(fd, ptr, bytesToWrite - bytesWritten);
         
         // handle EOF reached and error occourred
@@ -73,11 +67,6 @@ ssize_t writen_unless_condition(int fd, char *ptr, size_t bytesToWrite, bool (*c
 
     // success
     return bytesWritten;
-}
-
-ssize_t writen(int fd, char *ptr, size_t bytesToWrite) {
-    // forward call
-    return writen_unless_condition(fd, ptr, bytesToWrite, dummyCondition);
 }
 
 ssize_t pingOk(int fd) {

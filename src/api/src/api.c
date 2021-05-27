@@ -2,14 +2,16 @@
 
 #include <mymalloc.h>
 #include <comunication.h>
+#include <fileutils.h>
+#include <logging.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <errno.h>
 #include <unistd.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/un.h>
 // required nanosleep declaration
 int nanosleep(const struct timespec *req, struct timespec *rem);
 
@@ -40,67 +42,10 @@ static bool compareTimes(struct timespec t1, struct timespec t2) {
     return false;
 }
 
-static int fixFileName(char* filename, int len) {
-    for(int i=0; i<len; i++) {
-        if(filename[i] == '/' || filename[i] == '.') {
-            filename[i] = '_';
-        }
-    }
-    return len+1;
-}
-
-static int readFromFile(const char* pathname, char** buf) {
-    *buf = NULL;
-
-    long fileSize;
-    FILE* f = fopen(pathname, "r");
-    if(f == NULL) {
-        return -1;
-    }
-    fseek(f, 0L, SEEK_END);
-    fileSize = ftell(f);
-    rewind(f);
-
-    *buf = _malloc(sizeof(char) * (fileSize + 1));
-    fread(*buf, sizeof(char), fileSize, f);
-    (*buf)[fileSize] = '\0';
-    fclose(f);
-    return 0;
-}
-
-static void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim) {
-    if(dirname != NULL) {
-        int dirnameSize = strlen(dirname);
-
-        size_t nameBufSize = sizeof(char) * (dirnameSize + 1);
-        char* nameBuf = _malloc(nameBufSize);
-        snprintf(nameBuf, dirnameSize, "%s", dirname);
-        for(int i=0; i<dim; i+=2) {
-            fixFileName(content[i], sizes[i]);
-
-            int pathnameSize = strlen(content[i]);
-            int newSize = nameBufSize + sizeof(char) * (pathnameSize + 1);
-            nameBuf = _realloc(nameBuf, newSize);
-            snprintf(nameBuf + dirnameSize + 1, pathnameSize, "%s", content[i]);
-            nameBuf[newSize - 1] = '\0';
-
-            FILE* f = fopen(content[i], "w");
-            if(f == NULL) {
-                // if file is not opened ignore
-                continue;
-            }
-
-            fwrite(content[i+1], sizeof(char), sizes[i+1], f);
-            fclose(f);
-        }
-        free(nameBuf);
-    }
-}
-
 // returns -1 for errors or the number of bytesWritten
-static int writeMessage(char kind, const char* pathname, const char* content, int flags) {
+static int writeMessage(char kind, const char* pathname, const char* content, int contentLen, int flags) {
     int pathnameLen = strlen(pathname);
-    int contentLen = strlen(content);
+
     // kind is supposed to be a single char
     // size of identifier e.g. 'o' + sizeof pathname + pathname + sizeof content + content + sizeof flags
     size_t payloadLen = sizeof(char) + sizeof(int) + sizeof(char) * (pathnameLen + 1) + sizeof(int) + sizeof(char) * contentLen + sizeof(int);
@@ -131,7 +76,7 @@ static int writeMessage(char kind, const char* pathname, const char* content, in
     // write content and its size
     serializeInt(msgIndex, (int)contentLen);
     msgIndex += sizeof(int);
-    strncpy(msgIndex, content, contentLen);
+    memcpy(msgIndex, content, contentLen);
     msgIndex += contentLen;
 
     // write flags
@@ -202,7 +147,7 @@ static int readMessage(char*** content, int** sizes, int* size, char** msg) {
         (*sizes)[i] = contentSize;
         msgIndex += sizeof(int);
         
-        // save string
+        // save content
         (*content)[i] = msgIndex;
         msgIndex += contentSize;
         msgIndex[0] = '\0';
@@ -223,7 +168,7 @@ static int simpleApi(const char* pathname, int flags, char* apiName, char apiKin
     }
 
     // write content
-    int bytesWritten = writeMessage(apiKind, pathname, "", flags);
+    int bytesWritten = writeMessage(apiKind, pathname, "", 0, flags);
 
     // read response
     char **content, *msgBuf;
@@ -319,6 +264,40 @@ int openFile(const char* pathname, int flags) {
     return simpleApi(pathname, flags, "openFile", 'o');
 }
 
+int betterOpenFile(const char* pathname, int flags, const char* dirname) {
+    errno = 0;
+    gettimeofday(&t_start, NULL);
+
+    if(pathname == NULL) {
+        gettimeofday(&t_end, NULL);
+        setLastApiCall("betterOpenFile", "failure", "", 0, 0);
+        return -1;
+    }
+
+    // write content
+    int bytesWritten = writeMessage('o', pathname, "", 0, flags);
+
+    // read response
+    char **content, *msgBuf;
+    int *sizes, dim;
+    int bytesRead = readMessage(&content, &sizes, &dim, &msgBuf);
+
+    int success = (bytesWritten > 0 && bytesRead > 0) ? 0 : -1;
+    
+    if(success == 0) {
+        writeResultsToFile(dirname, content, sizes, dim);
+    }
+    
+    free(msgBuf);
+    free(content);
+    free(sizes);
+
+    // handle write result
+    gettimeofday(&t_end, NULL);
+    setLastApiCall("betterOpenFile", success == -1 ? "failure" : "success", pathname, bytesRead, bytesWritten);
+    return success;
+}
+
 int readFile(const char* pathname, void** buf, size_t* size) {
     errno = 0;
     gettimeofday(&t_start, NULL);
@@ -333,7 +312,7 @@ int readFile(const char* pathname, void** buf, size_t* size) {
     *size = 0;
 
     // write content
-    int bytesWritten = writeMessage('r', pathname, "", 0);
+    int bytesWritten = writeMessage('r', pathname, "", 0, 0);
 
     // read response
     char **content, *msgBuf;
@@ -346,7 +325,7 @@ int readFile(const char* pathname, void** buf, size_t* size) {
     if(success == 0 && dim == 2) {
         // copy content to user buffer
         *buf = _malloc(sizeof(char) * (sizes[1] + 1));
-        strncpy(*buf, content[1], sizes[1]);
+        memcpy(*buf, content[1], sizes[1]);
         memset((char*)(*buf) + sizes[1], '\0', 1);
         *size = sizes[1];
     } else {
@@ -375,7 +354,7 @@ int readNFiles(int N, const char* dirname) {
     }
 
     // write content
-    int bytesWritten = writeMessage('n', "", "", N);
+    int bytesWritten = writeMessage('n', "", "", 0, N);
 
     // read response
     char **content, *msgBuf;
@@ -403,14 +382,15 @@ int writeFile(const char* pathname, const char* dirname) {
     gettimeofday(&t_start, NULL);
 
     char* fileBuf;
-    if(pathname == NULL || readFromFile(pathname, &fileBuf) == -1) {
+    int fileSize = readFromFile(pathname, &fileBuf);
+    if(pathname == NULL || fileSize == -1) {
         gettimeofday(&t_end, NULL);
         setLastApiCall("writeFile", "failure", "", 0, 0);
         return -1;
     }
 
     // write content
-    int bytesWritten = writeMessage('w', pathname, fileBuf, 0);
+    int bytesWritten = writeMessage('w', pathname, fileBuf, fileSize, 0);
     free(fileBuf);
 
     // read response
@@ -430,7 +410,7 @@ int writeFile(const char* pathname, const char* dirname) {
 
     // handle write result
     gettimeofday(&t_end, NULL);
-    setLastApiCall("writeFile", success == -1 ? "failure" : "success", "", bytesRead, bytesWritten);
+    setLastApiCall("writeFile", success == -1 ? "failure" : "success", pathname, bytesRead, bytesWritten);
     return success;
 }
 
@@ -445,7 +425,7 @@ int appendToFile(const char* pathname, void* buf, size_t size, const char* dirna
     }
 
     // write content
-    int bytesWritten = writeMessage('a', pathname, buf, 0);
+    int bytesWritten = writeMessage('a', pathname, buf, size, 0);
 
     // read response
     char **content, *msgBuf;

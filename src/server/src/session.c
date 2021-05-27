@@ -39,7 +39,7 @@ void clear_session(session* s) {
 
 int getFreeFileDescriptor(session* s) {
     for(int i=0; i<MAX_OPENED_FILES; i++) {
-        if(s->openedFiles != NULL) {
+        if(s->openedFiles[i] == NULL) {
             return i;
         }
     }

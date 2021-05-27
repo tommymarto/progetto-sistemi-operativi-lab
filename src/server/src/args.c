@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <limits.h>
 #include <errno.h>
 
 #define logFoundWithParams "found option %s with argument %s"
@@ -23,7 +24,8 @@ config configs = {
     .maxFileCount = DEFAULT_MAX_FILE_COUNT,
     .maxFileSize = DEFAULT_MAX_FILE_SIZE,
     .maxClientsConnected = DEFAULT_MAX_CLIENTS,
-    .logVerbosity = DEFAULT_LOG_VERBOSITY
+    .logVerbosity = DEFAULT_LOG_VERBOSITY,
+    .logFileOutput = NULL
 };
 
 int fpeek(FILE *stream) {
@@ -120,7 +122,7 @@ void handleConfiguration(int argc, char* argv[]) {
         // default implementation reads config file in the same folder of the executable
         log_info("using default configuration file path");
         
-        char buff[1024];
+        char buff[PATH_MAX];
         int len = strlen(DEFAULT_CONFIGURATION_FILE);
         ssize_t sz = readlink("/proc/self/exe", buff, sizeof(buff));
         if(sz == -1) {
@@ -129,7 +131,7 @@ void handleConfiguration(int argc, char* argv[]) {
         } else {
             while(buff[--sz] != '/') {}
 
-            if(len + sz + 2 >= 1024) {
+            if(len + sz + 2 >= PATH_MAX) {
                 log_error("cannot read current path, using default configuration");
                 return;
             } else {
@@ -140,26 +142,41 @@ void handleConfiguration(int argc, char* argv[]) {
         }
     }
 
-    
+    configs.logFileOutput = fopen("serverLog.txt", "w");
+    if(configs.logFileOutput == NULL) {
+        log_error("unable to open logging file. Proceeding without operation logging...");
+    }
 
     log_info("trying to read configuration file %s", configFile);
     parseFileArguments(configFile, &configs);
 
     // handle max fd_set size and the special value 0
     configs.maxClientsConnected = configs.maxClientsConnected == 0 ? DEFAULT_MAX_CLIENTS : MIN(configs.maxClientsConnected, DEFAULT_MAX_CLIENTS);
+    
+    // handle file size misconfiguration
+    configs.maxMemorySize *= 1024 * 1024;
+    configs.maxFileSize = MIN(configs.maxFileSize, configs.maxMemorySize);
 
     // handle verbosity level
     switch (configs.logVerbosity) {
+        case 4: {
+            logging_level = FATAL | ERROR | WARN | REPORT | OPERATION | INFO;
+            break;
+        }
+        case 3: {
+            logging_level = FATAL | ERROR | WARN | REPORT | OPERATION;
+            break;
+        }
         case 2: {
-            logging_level = FATAL | ERROR | MESSAGE | OPERATION | INFO;
+            logging_level = FATAL | ERROR | WARN | REPORT;
             break;
         }
         case 1: {
-            logging_level = FATAL | ERROR | MESSAGE | OPERATION;
+            logging_level = FATAL | ERROR | REPORT;
             break;
         }
         case 0: {
-            logging_level = FATAL | ERROR;
+            logging_level = 0;
             break;
         }
         default: {

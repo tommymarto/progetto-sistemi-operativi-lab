@@ -31,7 +31,7 @@ request* new_request(char type, char* content, int extra, char* dir, int index) 
     // copy content
     str_len = strlen(content);
     r->content = _malloc(sizeof(char) * (str_len+1));
-    strncpy(r->content, content, str_len);
+    memcpy(r->content, content, str_len);
     r->content[str_len] = '\0';
 
     r->dir = NULL;

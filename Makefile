@@ -31,6 +31,7 @@ all: $(PROJECTS) | $(BIN_DIR_PROJECTS)
 
 clean: $(PROJECTS)
 	rm -rf $(BIN_DIR)
+	rm -rf destFiles
 
 $(PROJECTS):
 	$(MAKE) -C ./$(SRC_DIR)/$@ $(MAKECMDGOALS)
@@ -42,16 +43,15 @@ test1:
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	echo "test1"
+	./test1.sh
 
 test2:
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	echo "test2"
 
 test3:
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	echo "test3"
+	./test3.sh

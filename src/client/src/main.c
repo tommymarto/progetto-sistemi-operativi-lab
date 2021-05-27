@@ -2,6 +2,7 @@
 
 #include <client-data-structures.h>
 #include <logging.h>
+#include <fileutils.h>
 #include <args.h>
 #include <api.h>
 #include <dirent.h>
@@ -73,6 +74,14 @@ if(result == -1) {                                                              
     continue;                                                                                       \
 }
 
+#define logAndSkipIfOperationFailedWithOpBeforeContinue(kind, function, beforeContinue)                                                 \
+log_last_api_call();                                                                                \
+if(result == -1) {                                                                                  \
+    log_error("error while processing flag '" kind "': " function " failed. Skipping request...");  \
+    beforeContinue;                                                                                 \
+    continue;                                                                                       \
+}
+
 // flags from command line args
 #define DEFAULT_SOCKET_FILENAME "fileStorageSocket.sk"
 extern string* socketFileName;
@@ -98,7 +107,7 @@ int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
     }
 
     struct dirent* ent;
-    char path[2048];
+    char path[PATH_MAX];
     while((ent = readdir(dir)) != NULL && *remaining > 0) {
         if(ent->d_type == DT_DIR && ent->d_name[0] != '.') {
             // visit recursively
@@ -110,7 +119,7 @@ int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
 
             snprintf(path, sizeof(path), "%s/%s", dirname, ent->d_name);
             
-            result = openFile(path, O_CREATE | O_LOCK);
+            result = betterOpenFile(path, O_CREATE | O_LOCK, saveDir);
             logAndSkipIfOperationFailed("w", "openFile");
             result = writeFile(path, saveDir);
             logAndSkipIfOperationFailed("w", "writeFile");
@@ -144,7 +153,7 @@ int main(int argc, char *argv[]) {
         // real main
         if(pFlag) {
             log_info("found log flag. Enabling operation logging...");
-            logging_level |= OPERATION | MESSAGE;
+            logging_level |= OPERATION;
         }
         if(socketFileName == NULL) {
             log_info("option f not found. Using default socket filename...");
@@ -202,7 +211,7 @@ int main(int argc, char *argv[]) {
                         break;
                     }
                     case 'W': {
-                        result = openFile(r->content, O_CREATE | O_LOCK);
+                        result = betterOpenFile(r->content, O_CREATE | O_LOCK, r->dir);
                         logAndSkipIfOperationFailed("W", "openFile");
                         result = writeFile(r->content, r->dir);
                         log_last_api_call();
@@ -218,7 +227,7 @@ int main(int argc, char *argv[]) {
                         char* buf;
 
 
-                        result = openFile(r->content, 0);
+                        result = betterOpenFile(r->content, 0, r->dir);
                         logAndSkipIfOperationFailed("r", "openFile");
                         result = readFile(r->content, (void**)&buf, &bufSize);
                         log_last_api_call();
@@ -226,11 +235,32 @@ int main(int argc, char *argv[]) {
                             log_error("error while processing flag 'r': readFile failed. Skipping request...");
                         }
                         if(result != -1) {
-                            log_info("%d - %s", bufSize, buf);
+                            log_error("diomadonna");
+
+                            if(r->dir != NULL) {
+                                log_error("diofasufhi");
+
+                                // write result to file
+
+                                // copy because filename fix works in place
+                                int contentLen = strlen(r->content);
+                                char* contentCopy = _malloc(sizeof(char) * (contentLen + 1));
+                                memcpy(contentCopy, r->content, contentLen);
+                                contentCopy[contentLen] = '\0';
+
+                                // actual preparation + write
+                                char* contents[2] = { contentCopy, buf };
+                                int sizes[2] = { contentLen, bufSize };
+                                writeResultsToFile(r->dir, contents, sizes, 2);
+
+                                free(contentCopy);
+                            }
                         }
                         free(buf);
                         result = closeFile(r->content);
                         logAndSkipIfOperationFailed("r", "closeFile");
+
+
                         break;
                     }
                     case 'R': {
@@ -239,7 +269,7 @@ int main(int argc, char *argv[]) {
                         break;
                     }
                     case 'l': {
-                        result = openFile(r->content, 0);
+                        result = betterOpenFile(r->content, 0, r->dir);
                         logAndSkipIfOperationFailed("l", "openFile");
                         result = lockFile(r->content);
                         logAndSkipIfOperationFailed("l", "lockFile");
@@ -255,12 +285,30 @@ int main(int argc, char *argv[]) {
                         break;
                     }
                     case 'c': {
-                        result = openFile(r->content, O_LOCK);
+                        result = betterOpenFile(r->content, O_LOCK, r->dir);
                         logAndSkipIfOperationFailed("c", "openFile");
                         result = lockFile(r->content);
                         logAndSkipIfOperationFailed("c", "lockFile");
                         result = removeFile(r->content);
                         logAndSkipIfOperationFailed("c", "removeFile");
+                        break;
+                    }
+                    case 'a': {
+                        char* buf;
+                        int bufSize = readFromFile(r->content, &buf);
+                        if(bufSize == -1) {
+                            free(buf);
+                            log_error("error while processing flag 'a': error while reading from file. Skipping request...");
+                            continue;
+                        }
+
+                        result = betterOpenFile(r->content, 0, r->dir);
+                        logAndSkipIfOperationFailedWithOpBeforeContinue("a", "openFile", free(buf));
+                        result = appendToFile(r->content, buf, bufSize, r->dir);
+                        logAndSkipIfOperationFailedWithOpBeforeContinue("a", "appendToFile", free(buf));
+                        result = closeFile(r->content);
+                        logAndSkipIfOperationFailedWithOpBeforeContinue("a", "closeFile", free(buf));
+                        free(buf);
                         break;
                     }
                     case 'd':
@@ -281,7 +329,11 @@ int main(int argc, char *argv[]) {
             if(closeConnection(socketFileName->content) == -1) {
                 log_fatal("error during socket close");
                 log_fatal("exiting the program...");
+            } else {
+                log_info("connection closed");
             }
+            log_last_api_call();
+
         }
     }
 

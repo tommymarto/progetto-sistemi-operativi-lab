@@ -5,6 +5,7 @@
 #include <operations.h>
 #include <comunication.h>
 #include <requestqueue.h>
+#include <configuration.h>
 #include <intqueue.h>
 #include <files.h>
 #include <unistd.h>
@@ -13,15 +14,23 @@
 #include <string.h>
 
 extern bool threadExit();
-void setFdToSet(int fd);
-extern void handleSockClose(int fd);
+extern config configs;
 extern int_queue requestQueue;
 extern session sessions[];
+extern int pipeFds[];
 
 
 //
 //  utils
 //
+
+void writeToPipe(int kind, int fd) {
+    char pipeMsg[8];
+    serializeInt(pipeMsg, kind);
+    serializeInt(pipeMsg + 4, fd);
+
+    writen(pipeFds[1], pipeMsg, sizeof(int) * 2);
+}
 
 // returns -1 for errors or the number of bytesWritten
 int writeMessage(int n, char** content, int* sizes, int fd) {
@@ -51,7 +60,7 @@ int writeMessage(int n, char** content, int* sizes, int fd) {
     for(int i=0; i<n; i++) {
         serializeInt(msgIndex, sizes[i]);
         msgIndex += sizeof(int);
-        strncpy(msgIndex, content[i], sizeof(char) * sizes[i]);
+        memcpy(msgIndex, content[i], sizeof(char) * sizes[i]);
         msgIndex += sizes[i];
         msgIndex[0] = ' '; // dummy value for easier deserialization
         msgIndex++;
@@ -93,7 +102,7 @@ int readMessage(int fd, char** msgBuf, int* bufLen) {
     // read size of payload
     char headerBuf[4];
     int msgSize;
-    bytesRead = readn_unless_condition(fd, headerBuf, sizeof(int), threadExit);
+    bytesRead = readn(fd, headerBuf, sizeof(int));
 
     if(bytesRead == -1 || bytesRead == 0) {
         return bytesRead;
@@ -109,7 +118,7 @@ int readMessage(int fd, char** msgBuf, int* bufLen) {
     // read actual payload
     log_info("reading actual payload...");
     *msgBuf = _malloc(sizeof(char) * (msgSize + 1));
-    bytesRead = readn_unless_condition(fd, *msgBuf, sizeof(char) * msgSize, threadExit);
+    bytesRead = readn(fd, *msgBuf, sizeof(char) * msgSize);
     if(bytesRead == -1 || bytesRead == 0) {
         return bytesRead;
     } else if(bytesRead < msgSize) {
@@ -126,61 +135,68 @@ int readMessage(int fd, char** msgBuf, int* bufLen) {
 //
 
 // request handler
-int worker_body(request* r) {
+int worker_body(request* r, int* bytesWritten) {
     fileEntry** files = NULL;
     int result, dim = 0;
 
-    switch (r->kind) {
-        case 'o': {
-            files = openFile(r, &result, &dim, r->file->pathname, r->flags);
-            break;
-        }
-        case 'r': {
-            files = readFile(r, &result, &dim, r->file->pathname);
-            break;
-        }
-        case 'n': {
-            files = readNFiles(r, &result, &dim, r->flags);
-            break;
-        }
-        case 'w': {
-            files = writeFile(r, &result, &dim, r->file);
-            break;
-        }
-        case 'a': {
-            files = appendToFile(r, &result, &dim, r->file);
-            break;
-        }
-        case 'l': {
-            result = lockFile(r, r->file->pathname);
-            break;
-        }
-        case 'u': {
-            result = unlockFile(r, r->file->pathname);
-            break;
-        }
-        case 'c': {
-            result = closeFile(r, r->file->pathname);
-            break;
-        }
-        case 'R': {
-            result = removeFile(r, r->file->pathname);
-            break;
-        }
-        default: {
-            log_error("unhandled request type '%c', dropping request", r->kind);
-            result = -1;
+    log_info("received from fd %d file content length: %d", r->client->clientFd, r->file->length);
+
+    if(r->file->length > configs.maxFileSize) {
+        log_error("the received file is too big. Dropping request...");
+        result = -1;
+    } else {
+        switch (r->kind) {
+            case 'o': {
+                files = openFile(r, &result, &dim, r->file->pathname, r->flags);
+                break;
+            }
+            case 'r': {
+                files = readFile(r, &result, &dim, r->file->pathname);
+                break;
+            }
+            case 'n': {
+                files = readNFiles(r, &result, &dim, r->flags);
+                break;
+            }
+            case 'w': {
+                files = writeFile(r, &result, &dim, r->file);
+                break;
+            }
+            case 'a': {
+                files = appendToFile(r, &result, &dim, r->file);
+                break;
+            }
+            case 'l': {
+                result = lockFile(r, r->file->pathname);
+                break;
+            }
+            case 'u': {
+                result = unlockFile(r, r->file->pathname);
+                break;
+            }
+            case 'c': {
+                result = closeFile(r, r->file->pathname);
+                break;
+            }
+            case 'R': {
+                result = removeFile(r, r->file->pathname);
+                break;
+            }
+            default: {
+                log_error("unhandled request type '%c', dropping request", r->kind);
+                result = -1;
+            }
         }
     }
     
     // ignore result == 0 because it will be handled by the notifier
     if(result < 0) {
         // return error
-        pingKo(r->client->clientFd);
+        *bytesWritten = pingKo(r->client->clientFd);
     } else if(dim == 0) {
-        pingOk(r->client->clientFd);
+        *bytesWritten = pingOk(r->client->clientFd);
     } else {
-        writeFileArray(dim, files, r->client->clientFd);
+        *bytesWritten = writeFileArray(dim, files, r->client->clientFd);
     }
 
     if(files != NULL) {
@@ -206,6 +222,8 @@ void* worker_start(void* arg) {
             continue;
         }
 
+        boring_file_log(configs.logFileOutput, "fd: %d requestServedBy: %d", fd, *threadId);
+
         char* msgBuf = NULL;
         int bufLen;
         int bytesRead = readMessage(fd, &msgBuf, &bufLen);
@@ -216,31 +234,41 @@ void* worker_start(void* arg) {
             continue;
         } if(bytesRead == -1) {
             log_error("failed read from client %d", fd);
+            writeToPipe(1, fd);
             free(msgBuf);
             continue;
         } else if (bytesRead == 0) {
             // client has disconnected
             free(msgBuf);
-            filesystem_handle_connectionClosed(sessions + fd);
-            handleSockClose(fd);
+            writeToPipe(0, fd);
             continue;
         }
 
+        boring_file_log(configs.logFileOutput, "fd: %d bytesRead: %d", fd, bytesRead);
+
         request* r = new_request(msgBuf, bufLen, sessions + fd);
+
+        boring_file_log(configs.logFileOutput, "fd: %d pathname: %s", fd, r->file->pathname);
         log_info("worker %d received message of kind '%c'", *threadId, r->kind);
 
-        int result = worker_body(r);
+        int bytesWritten = -2;
+        int result = worker_body(r, &bytesWritten);
 
+        if(bytesWritten > 0) {
+            boring_file_log(configs.logFileOutput, "fd: %d bytesWritten: %d", fd, bytesWritten);
+        }
+        
         if(result != 0) {
             if(result == -1 || result == 1) {
                 r->free(r);
             } else if(result == 2) {
                 r->free_keep_file_content(r);
             }
-            setFdToSet(fd);
+
+            writeToPipe(1, fd);
         }
 
-        log_info("worker %d, request completed", *threadId);
+        log_info("worker %d, request completed with status", *threadId, result);
     }
 
     free(threadId);
@@ -256,18 +284,28 @@ void* worker_notify(void* arg) {
             continue;
         }
 
-        log_info("notifying client");
+        int clientFd = r->client->clientFd;
+
+        boring_file_log(configs.logFileOutput, "fd: %d requestServedByNotifier", clientFd);
+
+        log_info("notifying client %d", clientFd);
+
+        int bytesWritten = 0;
         bool status = r->client->opStatus;
         if(status) {
-            pingOk(r->client->clientFd);
-            // r->free_keep_file_content(r);
+            bytesWritten = pingOk(clientFd);
             r->free(r);
         } else {            
-            pingKo(r->client->clientFd);
+            bytesWritten = pingKo(clientFd);
             r->free(r);
         }
 
-        setFdToSet(r->client->clientFd);
+        log_info("notifying select %d", clientFd);
+        writeToPipe(1, clientFd);
+
+        if(bytesWritten > 0) {
+            boring_file_log(configs.logFileOutput, "fd: %d bytesWritten: %d", clientFd, bytesWritten);
+        }
     }
 
     return NULL;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdio.h>
+
 #define CONFIGURATION_STRING_LEN 128
 
 typedef struct config {
@@ -11,4 +13,5 @@ typedef struct config {
     int maxFileSize;
     int maxClientsConnected;
     int logVerbosity;
+    FILE* logFileOutput;
 } config;

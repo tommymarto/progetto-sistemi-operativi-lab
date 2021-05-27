@@ -1,11 +1,16 @@
 #include <operations.h>
 
 #include <mymalloc.h>
+#include <configuration.h>
 #include <logging.h>
 
 #define logOperationString "operation: %s, state: %s, file: %s"
 
+extern config configs;
+
 fileEntry** openFile(request* r, int* result, int* dim, char* pathname, int flags) {
+    boring_file_log(configs.logFileOutput, "fd: %d openFile: %s flags: %d", r->client->clientFd, pathname, flags);
+
     *dim = 0;
 
     log_operation(logOperationString, "openFile", "started", pathname);
@@ -40,6 +45,7 @@ fileEntry** openFile(request* r, int* result, int* dim, char* pathname, int flag
 }
 
 fileEntry** readFile(request* r, int* result, int* dim, char* pathname) {
+    boring_file_log(configs.logFileOutput, "fd: %d readFile: %s", r->client->clientFd, pathname);
     *dim = 0;
 
     log_operation(logOperationString, "readFile", "started", pathname);
@@ -64,10 +70,26 @@ fileEntry** readFile(request* r, int* result, int* dim, char* pathname) {
 }
 
 fileEntry** readNFiles(request* r, int* result, int* dim, int N) {
-    return NULL;
+    boring_file_log(configs.logFileOutput, "fd: %d readNFiles", r->client->clientFd);
+    log_operation(logOperationString, "readNFiles", "started", "");
+    *dim = 0;
+
+    fileEntry** filesRead = filesystem_get_n_fileEntry(dim, N);
+
+    if(filesRead == NULL) {
+        *result = -1;
+        log_operation(logOperationString, "readNFiles", "failed", "");
+        return NULL;
+    }
+    
+    *result = 1;
+    log_operation(logOperationString, "readNFiles", "success", "");
+
+    return filesRead;
 }
 
 fileEntry** writeFile(request* r, int* result, int* dim, fileEntry* file) {
+    boring_file_log(configs.logFileOutput, "fd: %d writeFile", r->client->clientFd);
     log_operation(logOperationString, "writeFile", "started", file->pathname);
     fileEntry** filesExpelled = filesystem_writeFile(result, dim, r, file);
 
@@ -84,6 +106,7 @@ fileEntry** writeFile(request* r, int* result, int* dim, fileEntry* file) {
 }
 
 fileEntry** appendToFile(request* r, int* result, int* dim, fileEntry* file) {
+    boring_file_log(configs.logFileOutput, "fd: %d appendToFile: %s", r->client->clientFd, file->pathname);
     log_operation(logOperationString, "appendToFile", "started", file->pathname);
     fileEntry** filesExpelled = filesystem_appendToFile(result, dim, r, file);
 
@@ -100,6 +123,7 @@ fileEntry** appendToFile(request* r, int* result, int* dim, fileEntry* file) {
 }
 
 int lockFile(request* r, char* pathname) {
+    boring_file_log(configs.logFileOutput, "fd: %d lockFile: %s", r->client->clientFd, pathname);
     log_operation(logOperationString, "lockFile", "started", pathname);
     int result = filesystem_lockAcquire(r, pathname);
 
@@ -113,6 +137,7 @@ int lockFile(request* r, char* pathname) {
 }
 
 int unlockFile(request* r, char* pathname) {
+    boring_file_log(configs.logFileOutput, "fd: %d unlockFile: %s", r->client->clientFd, pathname);
     log_operation(logOperationString, "unlockFile", "started", pathname);
     int result = filesystem_lockRelease(r, pathname);
 
@@ -126,6 +151,7 @@ int unlockFile(request* r, char* pathname) {
 }
 
 int closeFile(request* r, char* pathname) {
+    boring_file_log(configs.logFileOutput, "fd: %d closeFile: %s", r->client->clientFd, pathname);
     log_operation(logOperationString, "closeFile", "started", pathname);
     int descriptor = isFileOpened(r->client, pathname);
 
@@ -144,5 +170,15 @@ int closeFile(request* r, char* pathname) {
 }
 
 int removeFile(request* r, char* pathname) {
+    boring_file_log(configs.logFileOutput, "fd: %d removeFile: %s", r->client->clientFd, pathname);
+    log_operation(logOperationString, "removeFile", "started", pathname);
+    int result = filesystem_removeFile(r, pathname);
+
+    if(result == -1) {
+        log_operation(logOperationString, "removeFile", "failed", pathname);
+        return -1;
+    }
+
+    log_operation(logOperationString, "removeFile", "success", pathname);
     return 1;
 }
