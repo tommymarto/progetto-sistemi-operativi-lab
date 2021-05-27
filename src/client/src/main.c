@@ -235,11 +235,8 @@ int main(int argc, char *argv[]) {
                             log_error("error while processing flag 'r': readFile failed. Skipping request...");
                         }
                         if(result != -1) {
-                            log_error("diomadonna");
 
                             if(r->dir != NULL) {
-                                log_error("diofasufhi");
-
                                 // write result to file
 
                                 // copy because filename fix works in place
@@ -259,7 +256,6 @@ int main(int argc, char *argv[]) {
                         free(buf);
                         result = closeFile(r->content);
                         logAndSkipIfOperationFailed("r", "closeFile");
-
 
                         break;
                     }
@@ -287,8 +283,6 @@ int main(int argc, char *argv[]) {
                     case 'c': {
                         result = betterOpenFile(r->content, O_LOCK, r->dir);
                         logAndSkipIfOperationFailed("c", "openFile");
-                        result = lockFile(r->content);
-                        logAndSkipIfOperationFailed("c", "lockFile");
                         result = removeFile(r->content);
                         logAndSkipIfOperationFailed("c", "removeFile");
                         break;

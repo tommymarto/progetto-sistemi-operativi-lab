@@ -23,15 +23,15 @@ export
 
 TARGETS := all clean
 
-.PHONY: $(TARGETS) $(PROJECTS) $(BIN_DIR) test1 test2 test3
+.PHONY: $(TARGETS) $(PROJECTS) $(BIN_DIR) cleanTestOutput test1 test2 test3
 
 
 all: $(PROJECTS) | $(BIN_DIR_PROJECTS)
 	$(foreach project, $(PROJECTS), cp -r ./$(SRC_PREFIX)/$(project)/bin/. ./bin/$(project)/bin;)
 
-clean: $(PROJECTS)
+clean: $(PROJECTS) cleanTestOutput
 	rm -rf $(BIN_DIR)
-	rm -rf destFiles
+	rm -rf testFiles/bin
 
 $(PROJECTS):
 	$(MAKE) -C ./$(SRC_DIR)/$@ $(MAKECMDGOALS)
@@ -39,19 +39,39 @@ $(PROJECTS):
 $(BIN_DIR_PROJECTS):
 	mkdir -p $@
 
-test1:
-	$(MAKE) all
-	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
-	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	./test1.sh
+cleanTestOutput:
+	rm -rf destDir
+	rm -f serverLog.txt
 
-test2:
+test1: cleanTestOutput
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
+	cp -r ./bin ./testFiles
+    
+	valgrind --leak-check=full ./bin/server/bin/server & \
+	./test1.sh; \
+	kill -1 $$!; \
+	wait;
 
-test3:
+test2: cleanTestOutput
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	./test3.sh
+	cp -r ./bin ./testFiles
+
+	@./bin/server/bin/server & \
+    ./test2.sh; \
+    kill -1 $$!; \
+    wait
+
+test3: cleanTestOutput
+	$(MAKE) all
+	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
+	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
+	cp -r ./bin ./testFiles
+
+	@./bin/server/bin/server & \
+	timeout 1 ./test3.sh; \
+	kill -2 $$!; \
+	wait

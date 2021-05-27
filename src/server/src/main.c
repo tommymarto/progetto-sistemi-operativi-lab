@@ -278,6 +278,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    printf("\n");
+
     // cleanup
     log_info("cleanup begin");
     

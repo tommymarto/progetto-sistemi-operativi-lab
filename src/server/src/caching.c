@@ -34,6 +34,10 @@ static void printStats() {
     log_report("║ file count limit            : %10d      ║", configs.maxFileCount);
     log_report("║ cache algorithm activations : %10d      ║", activations);
     log_report("╚═══════════════════════════════════════════════╝");
+    
+    boring_file_log(configs.logFileOutput, "maxFileSystemSize: %d", maxFileSystemSize);
+    boring_file_log(configs.logFileOutput, "maxFileSystemFileCount: %d", maxFileSystemFileCount);
+    boring_file_log(configs.logFileOutput, "cacheAlgorithmActivations: %d", activations);
 }
 
 void initCachingSystem() {

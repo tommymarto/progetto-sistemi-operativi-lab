@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <fileutils.h>
 
 #include <mymalloc.h>
@@ -5,21 +7,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-static void fixFileName(char* filename, int len) {
-    for(int i=0; i<len; i++) {
-        if(filename[i] == '/') {
-            filename[i] = '_';
-        }
-    }
-
-    if(filename[0] == '.') {
-        filename[0] = '_';
-    }
-}
 
 int readFromFile(const char* pathname, char** buf) {
     *buf = NULL;
@@ -43,43 +34,44 @@ int readFromFile(const char* pathname, char** buf) {
 void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim) {
     if(dirname != NULL) {
         int dirnameSize = strlen(dirname);
-
-        // adjust dirname
-        char* correctDirName = _malloc(sizeof(char) * (dirnameSize + 1));
-        snprintf(correctDirName, dirnameSize, "%s", dirname);
-
-        if(correctDirName[dirnameSize - 1] == '/') {
-            dirnameSize--;
-            correctDirName[dirnameSize] = '\0';
-        }
         
-        log_warn(correctDirName);
+        // create path buff with additional length for 'mkdir -p '
+        char nameBuf[PATH_MAX + 10];
+        nameBuf[0] = '\0';
+        strcat(nameBuf, "mkdir -p ");
+        strcat(nameBuf, dirname);
 
-        // create path buff
-        char* nameBuf = _malloc(sizeof(char) * (dirnameSize + 1));
-        snprintf(nameBuf, dirnameSize, "%s", correctDirName);
-
-        log_warn(nameBuf);
-
-        // create dir if it does not exist
-        struct stat st = {0};
-        if (stat(nameBuf, &st) == -1) {
-            mkdir(nameBuf, 0700);
+        if(nameBuf[9 + dirnameSize - 1] != '/') {
+            nameBuf[9 + dirnameSize] = '/';
+            nameBuf[9 + dirnameSize + 1] = '\0';
+            dirnameSize++;
         }
+
 
         for(int i=0; i<dim; i+=2) {
-            fixFileName(content[i], sizes[i]);
+            int contentSize = sizes[i];
+            char* contentPtr = content[i];
 
-            log_warn(content[i]);
+            while(contentPtr[0] == '.' || contentPtr[0] == '/') {
+                contentPtr++;
+                contentSize--;
+            }
 
-            // newSize = dir + / + pathname
-            int newLen = dirnameSize + 1 + sizes[i] + 1;
-            nameBuf = _realloc(nameBuf, sizeof(char) * (newLen + 1));
-            snprintf(nameBuf, newLen, "%s/%s", correctDirName, content[i]);
+            strncpy(nameBuf + 9 + dirnameSize, contentPtr, PATH_MAX - dirnameSize);
 
-            log_warn(nameBuf);
+            int folderNameIndex = 9 + dirnameSize + contentSize;
+            while(nameBuf[folderNameIndex] != '/') {
+                folderNameIndex--;
+            }
 
-            FILE* f = fopen(nameBuf, "w");
+            nameBuf[folderNameIndex] = '\0';
+
+            // call mkdir
+            system(nameBuf);
+
+            nameBuf[folderNameIndex] = '/';
+
+            FILE* f = fopen(nameBuf + 9, "w");
             if(f == NULL) {
                 // if file is not opened ignore
                 continue;
@@ -89,8 +81,5 @@ void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim
             fwrite(content[i+1], sizeof(char), sizes[i+1], f);
             fclose(f);
         }
-
-        free(correctDirName);
-        free(nameBuf);
     }
 }

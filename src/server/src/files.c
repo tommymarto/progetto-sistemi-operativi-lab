@@ -339,7 +339,7 @@ fileEntry** filesystem_get_n_fileEntry(int* dim, int n) {
     int head;
     int count = getCacheBuffer(&cacheBuffer, &head);
 
-    if(n == 0) {
+    if(n == 0 || n > count) {
         n = count;
     }
     
