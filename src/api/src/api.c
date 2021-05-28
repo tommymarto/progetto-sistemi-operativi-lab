@@ -347,12 +347,6 @@ int readNFiles(int N, const char* dirname) {
     errno = 0;
     gettimeofday(&t_start, NULL);
 
-    if(dirname == NULL) {
-        gettimeofday(&t_end, NULL);
-        setLastApiCall("readNFiles", "failure", "", 0, 0);
-        return -1;
-    }
-
     // write content
     int bytesWritten = writeMessage('n', "", "", 0, N);
 

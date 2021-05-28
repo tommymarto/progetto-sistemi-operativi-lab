@@ -1,9 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
+
 #include <logging.h>
 #include <args.h>
 #include <worker.h>
 #include <intqueue.h>
 #include <mymalloc.h>
+#include <mylocks.h>
 #include <files.h>
 #include <comunication.h>
 #include <stdlib.h>
@@ -40,9 +42,9 @@ typedef struct sigaction sig_act_t;
 
 bool threadExit() {
     bool result;
-    pthread_rwlock_rdlock(&threadExitSigLock);
+    _pthread_rwlock_rdlock(&threadExitSigLock);
     result = threadExitSig;
-    pthread_rwlock_unlock(&threadExitSigLock);
+    _pthread_rwlock_unlock(&threadExitSigLock);
     return result;
 }
 
@@ -169,6 +171,7 @@ int main(int argc, char *argv[]) {
     // spawn workers
     pthread_t notifier;
     if(pthread_create(&notifier, NULL, worker_notify, NULL) != 0) {
+        log_fatal(strerror(errno));
         log_fatal("unable to start the worker notifier");
         log_fatal("exiting the program...");
         exit(EXIT_FAILURE);
@@ -179,6 +182,7 @@ int main(int argc, char *argv[]) {
         int* threadId = _malloc(sizeof(int));
         *threadId = i;
         if(pthread_create(workers + i, NULL, worker_start, (void*)threadId) != 0) {
+            log_fatal(strerror(errno));
             log_fatal("unable to start the worker #%d", i);
             log_fatal("exiting the program...");
             exit(EXIT_FAILURE);
@@ -288,18 +292,22 @@ int main(int argc, char *argv[]) {
         wait_int_queue_empty(&requestQueue);
         // not wait notifier queue 'cause someone may be still waiting for a lock
 
-        pthread_rwlock_wrlock(&threadExitSigLock);
+        _pthread_rwlock_wrlock(&threadExitSigLock);
         threadExitSig = true;
-        pthread_rwlock_unlock(&threadExitSigLock);
+        _pthread_rwlock_unlock(&threadExitSigLock);
     }
     close_int_queue(&requestQueue);
     close_filesystem_pending_locks();   // close notifier queue
     
     log_info("waiting for workers to finish");
     for(int i=0; i<configs.nThreadWorkers; i++) {
-        pthread_join(workers[i], NULL);
+        if(pthread_join(workers[i], NULL) != 0) {
+            log_error(strerror(errno));
+        }
     }
-    pthread_join(notifier, NULL);
+    if(pthread_join(notifier, NULL)) {
+        log_error(strerror(errno));
+    }
     log_info("all workers finished");
     
     free_int_queue(&requestQueue);

@@ -1,6 +1,7 @@
 #include <files.h>
 
 #include <mymalloc.h>
+#include <mylocks.h>
 #include <caching.h>
 #include <logging.h>
 #include <configuration.h>
@@ -270,7 +271,7 @@ void init_filesystem() {
 }
 
 void filesystem_handle_connectionClosed(session* closedClient) {
-    pthread_rwlock_wrlock(&tableLock);
+    _pthread_rwlock_wrlock(&tableLock);
 
     // clear pending lock request
     clean_pending_lock_request(closedClient, false);
@@ -285,7 +286,7 @@ void filesystem_handle_connectionClosed(session* closedClient) {
         }
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 }
 
 void free_filesystem() {
@@ -320,7 +321,7 @@ fileEntry* filesystem_get_fileEntry(char* pathname) {
     fileEntry* result = NULL;
 
     // acquire bucket lock in read mode
-    pthread_rwlock_rdlock(&tableLock);
+    _pthread_rwlock_rdlock(&tableLock);
 
     fileEntry* f = get_fileEntry_ref(pathname, index);
 
@@ -329,7 +330,7 @@ fileEntry* filesystem_get_fileEntry(char* pathname) {
         result = deep_copy_file(f);
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
@@ -372,11 +373,11 @@ bool filesystem_fileExists(char* pathname) {
     int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
 
     // acquire bucket lock in read mode
-    pthread_rwlock_rdlock(&tableLock);
+    _pthread_rwlock_rdlock(&tableLock);
     
     bool result = get_fileEntry_ref(pathname, index) != NULL;
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
@@ -394,9 +395,9 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
 
     // choose acquire mode depending on operations to be performed
     if(!(flags & O_CREATE) && !(flags & O_LOCK)) {
-        pthread_rwlock_rdlock(&tableLock);
+        _pthread_rwlock_rdlock(&tableLock);
     } else {
-        pthread_rwlock_wrlock(&tableLock);
+        _pthread_rwlock_wrlock(&tableLock);
     }
 
     int indexOfFile = isFileOpened(client, pathname);
@@ -472,7 +473,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         }
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     *result = failed ? -1 : *result;
 
@@ -493,7 +494,7 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
     *result = -1;
 
     // acquire bucket lock in write mode
-    pthread_rwlock_wrlock(&tableLock);
+    _pthread_rwlock_wrlock(&tableLock);
 
     fileEntry* fileToWrite = get_fileEntry_ref(f->pathname, index);
     if(fileToWrite != NULL && fileToWrite->owner == client->clientFd) {
@@ -525,7 +526,7 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
         }
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     // printStats();
 
@@ -544,7 +545,7 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
     *result = -1;
 
     // acquire bucket lock in write mode
-    pthread_rwlock_wrlock(&tableLock);
+    _pthread_rwlock_wrlock(&tableLock);
 
     int descriptor = isFileOpened(client, f->pathname);
     if(descriptor != -1) {
@@ -586,7 +587,7 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
         }
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     // printStats();
 
@@ -602,14 +603,14 @@ int filesystem_lockAcquire(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    pthread_rwlock_wrlock(&tableLock);
+    _pthread_rwlock_wrlock(&tableLock);
     
     int fileIndex = client->isFileOpened(client, pathname);
     if(fileIndex != -1) {
         result = lockfile(r, pathname, index, fileIndex);
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
@@ -623,7 +624,7 @@ int filesystem_lockRelease(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    pthread_rwlock_wrlock(&tableLock);
+    _pthread_rwlock_wrlock(&tableLock);
     
     int fileIndex = client->isFileOpened(client, pathname);
     if(fileIndex != -1) {
@@ -631,7 +632,7 @@ int filesystem_lockRelease(request* r, char* pathname) {
         client->canWriteOnFile[fileIndex] = false;
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     return result;
 }
@@ -645,7 +646,7 @@ int filesystem_removeFile(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    pthread_rwlock_wrlock(&tableLock);
+    _pthread_rwlock_wrlock(&tableLock);
     
 
     int descriptor = isFileOpened(client, pathname);
@@ -685,7 +686,7 @@ int filesystem_removeFile(request* r, char* pathname) {
         }
     }
 
-    pthread_rwlock_unlock(&tableLock);
+    _pthread_rwlock_unlock(&tableLock);
 
     // printStats();
 

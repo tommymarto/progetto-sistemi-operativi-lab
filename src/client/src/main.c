@@ -1,5 +1,3 @@
-#define _GNU_SOURCE
-
 #include <client-data-structures.h>
 #include <logging.h>
 #include <fileutils.h>

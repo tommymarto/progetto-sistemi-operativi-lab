@@ -1,6 +1,6 @@
 
 CC			=  gcc
-CFLAGS	    += -std=c11 -Wall -Werror -pedantic-errors -Wno-unused-function -Wno-unused-result
+CFLAGS	    += -std=c11 -D_GNU_SOURCE -Wall -Werror -pedantic-errors -Wno-unused-function -Wno-unused-result
 INCLUDES	= -I ../common/include -I ../api/include -I ./include
 LDFLAGS 	=
 OPTFLAGS	= -O1

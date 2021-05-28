@@ -1,5 +1,6 @@
 #include <logging.h>
 
+#include <mylocks.h>
 #include <pthread.h>
 
 #define BLACK "\033[0;30m"
@@ -23,13 +24,13 @@ static inline void logger(FILE* stream, const char* type, const char* fmt, va_li
         return;
     }
     
-    pthread_mutex_lock(&printMutex);
+    _pthread_mutex_lock(&printMutex);
     
     fprintf(stream, "[%s]: ", type);
     vfprintf(stream, fmt, args);
     fprintf(stream, "\n");
 
-    pthread_mutex_unlock(&printMutex);
+    _pthread_mutex_unlock(&printMutex);
 }
 
 void boring_file_log(FILE* stream, const char* fmt, ...) {
