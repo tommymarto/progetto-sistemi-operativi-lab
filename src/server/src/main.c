@@ -79,7 +79,7 @@ void setupServerSocket() {
     // init socket filename
     int socketFileNameLen = strlen(configs.socketFileName);
     socketFileName = _malloc(sizeof(char) * (socketFileNameLen + 1));
-    strncpy(socketFileName, configs.socketFileName, socketFileNameLen);
+    strncpy(socketFileName, configs.socketFileName, socketFileNameLen + 1);
     socketFileName[socketFileNameLen] = '\0';
 
     // socket creation

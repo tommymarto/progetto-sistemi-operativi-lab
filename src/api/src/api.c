@@ -27,7 +27,8 @@ static void setLastApiCall(char* opName, char* opStatus, const char* file, int b
     lastApiCall.opName = opName;
     lastApiCall.opStatus = opStatus;
     lastApiCall.errorCode = serverResponseError;
-    strncpy(lastApiCall.file, file, FILE_LEN);
+    snprintf(lastApiCall.file, FILE_LEN, "%s", file);
+    // strncpy(lastApiCall.file, file, FILE_LEN);
     lastApiCall.bytesRead = bytesRead;
     lastApiCall.bytesWritten = bytesWritten;
     lastApiCall.duration = (t_end.tv_sec - t_start.tv_sec) * 1000000 + t_end.tv_usec - t_start.tv_usec;
@@ -68,7 +69,7 @@ static int writeMessage(char kind, const char* pathname, const char* content, in
     // write pathname and its size
     serializeInt(msgIndex, (int)pathnameLen);
     msgIndex += sizeof(int);
-    strncpy(msgIndex, pathname, pathnameLen);
+    strncpy(msgIndex, pathname, pathnameLen + 1);
     msgIndex += pathnameLen;
     *msgIndex = ' '; // dummy char for easier deserialization
     msgIndex += 1;
@@ -271,6 +272,7 @@ int betterOpenFile(const char* pathname, int flags, const char* dirname) {
     if(pathname == NULL) {
         gettimeofday(&t_end, NULL);
         setLastApiCall("betterOpenFile", "failure", "", 0, 0);
+        log_report("mhanz");
         return -1;
     }
 

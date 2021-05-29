@@ -16,7 +16,7 @@ void set_request_directory(request* self, char* newDir) {
     // copy dir
     int str_len = strlen(newDir);
     self->dir = _malloc(sizeof(char) * (str_len+1));
-    strncpy(self->dir, newDir, str_len);
+    strncpy(self->dir, newDir, str_len + 1);
     self->dir[str_len] = '\0';
 }
 
@@ -31,7 +31,7 @@ request* new_request(char type, char* content, int extra, char* dir, int index) 
     // copy content
     str_len = strlen(content);
     r->content = _malloc(sizeof(char) * (str_len+1));
-    memcpy(r->content, content, str_len);
+    memcpy(r->content, content, str_len + 1);
     r->content[str_len] = '\0';
 
     r->dir = NULL;
@@ -39,7 +39,7 @@ request* new_request(char type, char* content, int extra, char* dir, int index) 
         // copy dir
         str_len = strlen(dir);
         r->dir = _malloc(sizeof(char) * (str_len+1));
-        strncpy(r->dir, dir, str_len);
+        strncpy(r->dir, dir, str_len + 1);
         r->dir[str_len] = '\0';
     }
 

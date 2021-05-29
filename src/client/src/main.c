@@ -5,6 +5,7 @@
 #include <api.h>
 #include <dirent.h>
 #include <limits.h>
+#include <errno.h>
 #include <time.h>
 // required nanosleep declaration
 int nanosleep(const struct timespec *req, struct timespec *rem);
@@ -72,7 +73,7 @@ if(result == -1) {                                                              
     continue;                                                                                       \
 }
 
-#define logAndSkipIfOperationFailedWithOpBeforeContinue(kind, function, beforeContinue)                                                 \
+#define logAndSkipIfOperationFailedWithOpBeforeContinue(kind, function, beforeContinue)             \
 log_last_api_call();                                                                                \
 if(result == -1) {                                                                                  \
     log_error("error while processing flag '" kind "': " function " failed. Skipping request...");  \
@@ -85,6 +86,8 @@ if(result == -1) {                                                              
 extern string* socketFileName;
 extern bool hFlag;
 extern bool pFlag;
+extern bool qFlag;
+extern bool eFlag;
 extern int tFlag;
 
 // for logging verbosity
@@ -109,13 +112,13 @@ int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
     while((ent = readdir(dir)) != NULL && *remaining > 0) {
         if(ent->d_type == DT_DIR && ent->d_name[0] != '.') {
             // visit recursively
-            snprintf(path, sizeof(path), "%s/%s", dirname, ent->d_name);
+            snprintf(path, PATH_MAX, "%s/%s", dirname, ent->d_name);
             handleSmallWFlag(path, saveDir, remaining);
         } else if(ent->d_type == DT_REG) {
             // write file
             *remaining -= 1;
 
-            snprintf(path, sizeof(path), "%s/%s", dirname, ent->d_name);
+            snprintf(path, PATH_MAX, "%s/%s", dirname, ent->d_name);
             
             result = betterOpenFile(path, O_CREATE | O_LOCK, saveDir);
             logAndSkipIfOperationFailed("w", "openFile");
@@ -140,6 +143,10 @@ int main(int argc, char *argv[]) {
     atexit(flushAll);
     logging_level |= INFO;
 
+    if(argc >= 2 && strcmp(argv[1], "-q") == 0) {
+            logging_level &= ~INFO;
+    }
+
     vector_request* requests = parseCommandLineArguments(argc, argv);
 
     if(hFlag) {
@@ -152,6 +159,14 @@ int main(int argc, char *argv[]) {
         if(pFlag) {
             log_info("found log flag. Enabling operation logging...");
             logging_level |= OPERATION;
+        }
+        if(qFlag) {
+            log_info("found quiet flag. Disabling info logging...");
+            logging_level &= ~INFO;
+        }
+        if(qFlag) {
+            log_info("found error flag. Disabling error logging...");
+            logging_level &= ~ERROR;
         }
         if(socketFileName == NULL) {
             log_info("option f not found. Using default socket filename...");
@@ -174,6 +189,7 @@ int main(int argc, char *argv[]) {
 
         if(openConnection(socketFileName->content, 10, timeout) == -1) {
             log_last_api_call();
+            log_fatal(strerror(errno));
             log_fatal("unable to create socket");
             log_fatal("exiting the program...");
             connectionFailed = true;

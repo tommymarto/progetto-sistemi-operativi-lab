@@ -16,11 +16,11 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) $(OPTFLAGS) -c -o $@ $<
 
 test1: $(EXE)
-	./generate_config.sh --max-files 10000 --max-memory 128 --workers-count 1 --log-verbosity 1
+	./generate_config.sh --max-files 10000 --max-memory 128 --workers-count 1 --log-verbosity 2
 	mv -f config.txt ./bin
 
 test2: $(EXE)
-	./generate_config.sh --max-files 10 --max-memory 1 --workers-count 4 --log-verbosity 1
+	./generate_config.sh --max-files 10 --max-memory 1 --workers-count 4 --log-verbosity 2
 	mv -f config.txt ./bin
 
 test3: $(EXE)

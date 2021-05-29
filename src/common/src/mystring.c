@@ -14,7 +14,7 @@ string* new_string(char* content) {
     int content_len = strlen(content);
     new_string->size = content_len + 1;
     new_string->content = _malloc(sizeof(char) * new_string->size);
-    strncpy(new_string->content, content, content_len);
+    strncpy(new_string->content, content, content_len+1);
     new_string->content[new_string->size - 1] = '\0';
 
     new_string->free = free_string;

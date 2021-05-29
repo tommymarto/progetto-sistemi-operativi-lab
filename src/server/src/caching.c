@@ -19,6 +19,23 @@ int maxFileSystemSize = 0;
 int maxFileSystemFileCount = 0;
 int activations = 0;
 
+static void printActiveFiles() {
+    log_fatal("╔═══════════════════════════════════════════════");
+    log_fatal("║ FILESYSTEM USAGE ADDITIONAL INFO:             ");
+    log_fatal("║                                               ");
+    log_fatal("║ List of files still stored:                   ");
+
+    int curHead = head;
+
+    for(int i=0; i<currentFileSystemFileCount; i++) {
+        log_fatal("║ - %s", cache[curHead]->pathname);
+        curHead = (curHead + 1) % configs.maxFileCount;
+    }
+
+    log_fatal("║                                               ");
+    log_fatal("╚═══════════════════════════════════════════════");
+}
+
 static void printStats() {
     log_report("╔═══════════════════════════════════════════════╗");
     log_report("║ FILESYSTEM USAGE REPORT:                      ║");
@@ -82,8 +99,8 @@ fileEntry* handleInsertionFIFO(fileEntry* file) {
         fileToRemove = cache[head];
         head = (head + 1) % configs.maxFileCount;
 
-        log_warn("CACHING SUBSTITUTION ACTIVATED. FILE REMOVED: %s", fileToRemove->pathname);
-        boring_file_log(configs.logFileOutput, "cache substitution inFile: %s outFile: %s", file->pathname, fileToRemove->pathname);
+        log_warn("CACHING SUBSTITUTION ACTIVATED (FILE COUNT). FILE REMOVED: %s FILE INSERTED: %s", fileToRemove->pathname, file->pathname);
+        boring_file_log(configs.logFileOutput, "cache substitution (count) inFile: %s outFile: %s", file->pathname, fileToRemove->pathname);
     }
 
     // insert new file
@@ -105,6 +122,7 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
     int index = head;
     int indexOfEditedFile = -1;
 
+    int expectedFileSystemFileCount = currentFileSystemFileCount;
     int expectedFileSystemSize = currentFileSystemSize + (newSize - file->length);
 
     // file is expected to fit in memory so no queue bad index is accessed, otherwise it's handled in the readMessage phase
@@ -119,6 +137,7 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
         (*dim)++;
         index = (index + 1) % configs.maxFileCount;
         expectedFileSystemSize -= cache[index]->length;
+        expectedFileSystemFileCount--;
     }
 
     // prepare file to remove
@@ -137,8 +156,8 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
             filesToRemove[i] = cache[head];
             head = (head + 1) % configs.maxFileCount;
 
-            log_warn("CACHING SUBSTITUTION ACTIVATED. FILE REMOVED: %s", filesToRemove[i]->pathname);
-            boring_file_log(configs.logFileOutput, "cache substitution inFile: %s outFile: %s", file->pathname, filesToRemove[i]->pathname);
+            log_warn("CACHING SUBSTITUTION ACTIVATED (FILESYSTEM SIZE). FILE REMOVED: %s FILE EDITED: %s", filesToRemove[i]->pathname, file->pathname);
+            boring_file_log(configs.logFileOutput, "cache substitution (size) inFile: %s outFile: %s", file->pathname, filesToRemove[i]->pathname);
         }
     }
 
@@ -151,6 +170,8 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
     // update stats
     currentFileSystemSize = expectedFileSystemSize;
     maxFileSystemSize = MAX(maxFileSystemSize, currentFileSystemSize);
+    currentFileSystemFileCount = expectedFileSystemFileCount;
+    maxFileSystemFileCount = MAX(maxFileSystemFileCount, currentFileSystemFileCount);
 
     return filesToRemove;
 }
@@ -211,6 +232,8 @@ fileEntry* handleInsertion(fileEntry* file) {
         result = handleInsertionLRU(file);
     }
     
+    // printActiveFiles();
+    // printStats();
     boring_file_log(configs.logFileOutput, "fileInsertion: %s currentFileSystemSize: %d currentFileSystemFileCount: %d", file->pathname, currentFileSystemSize, currentFileSystemFileCount);
     return result;
 }
@@ -225,6 +248,8 @@ fileEntry** handleEdit(int* dim, fileEntry* file, int newSize) {
         result = handleEditLRU(dim, file, newSize);
     }
     
+    // printActiveFiles();
+    // printStats();
     boring_file_log(configs.logFileOutput, "fileEdit: %s currentFileSystemSize: %d currentFileSystemFileCount: %d", file->pathname, currentFileSystemSize, currentFileSystemFileCount);
     return result;
 }
@@ -237,5 +262,7 @@ void handleRemoval(fileEntry* file) {
         handleRemovalLRU(file);
     }
 
+    // printActiveFiles();
+    // printStats();
     boring_file_log(configs.logFileOutput, "fileRemoval: %s currentFileSystemSize: %d currentFileSystemFileCount: %d", file->pathname, currentFileSystemSize, currentFileSystemFileCount);
 }

@@ -3,7 +3,7 @@ CC			=  gcc
 CFLAGS	    += -std=c11 -D_GNU_SOURCE -Wall -Werror -pedantic-errors -Wno-unused-function -Wno-unused-result
 INCLUDES	= -I ../common/include -I ../api/include -I ./include
 LDFLAGS 	=
-OPTFLAGS	= -O1
+OPTFLAGS	= -O3
 MAKEFLAGS 	+= -s
 
 API_LIB = -L../api/bin -Wl,-rpath=$(PWD)/bin/api/bin -lapi
@@ -31,7 +31,8 @@ all: $(PROJECTS) | $(BIN_DIR_PROJECTS)
 
 clean: $(PROJECTS) cleanTestOutput
 	rm -rf $(BIN_DIR)
-	rm -rf testFiles/bin
+	rm -rf testFiles/test/bin
+	rm -rf testFiles/test/src
 
 $(PROJECTS):
 	$(MAKE) -C ./$(SRC_DIR)/$@ $(MAKECMDGOALS)
@@ -47,7 +48,7 @@ test1: cleanTestOutput
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	cp -r ./bin ./testFiles
+	cp -r ./bin ./testFiles/test
     
 	valgrind --leak-check=full ./bin/server/bin/server & \
 	./test1.sh; \
@@ -58,7 +59,7 @@ test2: cleanTestOutput
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	cp -r ./bin ./testFiles
+	cp -r ./bin ./testFiles/test
 
 	@./bin/server/bin/server & \
     ./test2.sh; \
@@ -69,9 +70,11 @@ test3: cleanTestOutput
 	$(MAKE) all
 	$(MAKE) -C ./$(SRC_DIR)/server $@ $(MAKECMDGOALS)
 	cp -r ./$(SRC_PREFIX)/server/bin/. ./bin/server/bin
-	cp -r ./bin ./testFiles
+	cp -r ./bin ./testFiles/test
+	cp -r ./src ./testFiles/test
+	cp -r ./src ./testFiles/test/src
 
 	@./bin/server/bin/server & \
-	timeout 1 ./test3.sh; \
+	timeout 30 ./test3.sh; \
 	kill -2 $$!; \
 	wait

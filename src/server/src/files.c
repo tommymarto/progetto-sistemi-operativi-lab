@@ -54,7 +54,7 @@ static void printStats() {
     for(int i=0; i<HASHTABLE_SIZE; i++) {
         hashEntry* e = filesystem[i];
         while(e != NULL) {
-            log_report("║ - %s %d", e->file->pathname, i);
+            log_report("║ - %s %4d", e->file->pathname, i);
             e = e->next;
         }
     }
@@ -102,6 +102,26 @@ static hashEntry* remove_hashEntry_ref(char* pathname, int hashIndex, bool keepF
             filesystem[hashIndex] = current->next;
         } else {
             prev->next = current->next;
+        }
+
+        // notify all waiting file of the removal
+        while(current->queueTail != current->queueHead) {
+            request* nextOwner = current->waitingQueue[current->queueHead % MAX_CLIENTS_WAITING_FOR_LOCK];
+            current->queueHead++;
+            if(current->queueHead >= MAX_CLIENTS_WAITING_FOR_LOCK) {
+                current->queueHead -= MAX_CLIENTS_WAITING_FOR_LOCK;
+                current->queueTail -= MAX_CLIENTS_WAITING_FOR_LOCK;
+            }
+
+            if(nextOwner == NULL) {
+                continue;
+            }
+
+            free(nextOwner->client->pathnamePendingLock);
+            nextOwner->client->pathnamePendingLock = NULL;
+            nextOwner->client->opStatus = false;
+
+            insert_request_queue(&clientsToNotify, nextOwner);
         }
 
         if(keepFile) {
@@ -208,6 +228,10 @@ static int unlockfileWithSession(session* client, char* pathname, int index, int
                 if(nextOwner == NULL) {
                     continue;
                 }
+
+                int sas = 0;
+                sas = sas + 1;
+                sas = nextOwner->client->clientFd;
 
                 h->file->owner = nextOwner->client->clientFd;
                 free(nextOwner->client->pathnamePendingLock);
@@ -407,8 +431,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         failed = true;
     }
 
-    
-    int descriptor = getFreeFileDescriptor(client);
+    int descriptor = indexOfFile != -1 ? indexOfFile : getFreeFileDescriptor(client);
     if(descriptor == -1) {
         failed = true;
     }
@@ -430,17 +453,20 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         f->content = buf + pathnameLen;
         f->length = 0;
 
-        // handle caching
-        fileExpelled = handleInsertion(f);
+        failed = !put_fileEntry_ref(f, index);
 
-        if(fileExpelled != NULL) {
-            // get bucket index
-            unsigned int expelledIndex = hash((unsigned char*)fileExpelled->pathname) % HASHTABLE_SIZE;
-            remove_hashEntry_ref(fileExpelled->pathname, expelledIndex, true);
+        if(!failed) {
+            // handle caching
+            fileExpelled = handleInsertion(f);
+
+            if(fileExpelled != NULL) {
+                // get bucket index
+                unsigned int expelledIndex = hash((unsigned char*)fileExpelled->pathname) % HASHTABLE_SIZE;
+                remove_hashEntry_ref(fileExpelled->pathname, expelledIndex, true);
+            }
         }
         
 
-        failed = !put_fileEntry_ref(f, index);
 
         if(failed) {
             free(buf);
@@ -453,7 +479,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
     if((flags & O_LOCK) && !failed) {
         *result = lockfile(r, pathname, index, descriptor);
 
-        if(*result != 1) {
+        if(*result == -1) {
             failed = true;
         }
     }
@@ -462,7 +488,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         if(get_fileEntry_ref(pathname, index) != NULL) {
             int pathLen = strlen(pathname);
             client->openedFiles[descriptor] = _malloc(sizeof(char) * (pathLen + 1));
-            strncpy(client->openedFiles[descriptor], pathname, pathLen);
+            strncpy(client->openedFiles[descriptor], pathname, pathLen + 1);
             client->openedFiles[descriptor][pathLen] = '\0';
             
             if((flags & O_CREATE) && (flags & O_LOCK)) {
@@ -657,26 +683,8 @@ int filesystem_removeFile(request* r, char* pathname) {
             // request came from the real owner
             if(h->file->owner == client->clientFd) {
                 client->canWriteOnFile[descriptor] = false;
-                
-                // notify all waiting file of the removal
-                while(h->queueTail != h->queueHead) {
-                    request* nextOwner = h->waitingQueue[h->queueHead % MAX_CLIENTS_WAITING_FOR_LOCK];
-                    h->queueHead++;
-                    if(h->queueHead >= MAX_CLIENTS_WAITING_FOR_LOCK) {
-                        h->queueHead -= MAX_CLIENTS_WAITING_FOR_LOCK;
-                        h->queueTail -= MAX_CLIENTS_WAITING_FOR_LOCK;
-                    }
-
-                    if(nextOwner == NULL) {
-                        continue;
-                    }
-
-                    free(nextOwner->client->pathnamePendingLock);
-                    nextOwner->client->pathnamePendingLock = NULL;
-                    nextOwner->client->opStatus = false;
-
-                    insert_request_queue(&clientsToNotify, nextOwner);
-                }
+                free(client->openedFiles[descriptor]);
+                client->openedFiles[descriptor] = NULL;
 
                 handleRemoval(h->file);
                 remove_hashEntry_ref(pathname, index, false);

@@ -14,6 +14,8 @@
 string* socketFileName = NULL;
 bool hFlag = false;
 bool pFlag = false;
+bool qFlag = false;
+bool eFlag = false;
 int tFlag = 0;
 
 extern char* optarg;
@@ -25,6 +27,8 @@ extern int optind, optopt;
     -h
     -p
     -f filename
+    -q                  (quiet logs)
+    -e                  (disable error logging)
     -w dirname[,n=0]
     -W file1[,file2]
     -d dirname
@@ -35,7 +39,7 @@ extern int optind, optopt;
     -l file1[,file2]
     -u file1[,file2]
     -c file1[,file2]
-    -a file1[,file2]
+    -a file1[,file2]    (append content of file_i to file_i)
 */
 
 void handleSingleParameterWithExtra(vector_request* requests, char request_type, char* arg, int extra, int index) {
@@ -68,7 +72,7 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
     bool tFound = false;
 
     int opt, index=0;
-    while ((opt = getopt(argc, argv, ":hpf:w:W:d:D:r:R:t:l:u:c:a:")) != -1)
+    while ((opt = getopt(argc, argv, ":hpqef:w:W:d:D:r:R:t:l:u:c:a:")) != -1)
     {
         switch (opt) {
             case '?': {
@@ -101,6 +105,24 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 }
                 log_info(logFound, 'p');
                 pFlag = true;
+                break;
+            }
+            case 'q': {
+                if(qFlag) {
+                    log_error(logAlreadyFound, 'q');
+                    break;
+                }
+                log_info(logFound, 'q');
+                qFlag = true;
+                break;
+            }
+            case 'e': {
+                if(eFlag) {
+                    log_error(logAlreadyFound, 'e');
+                    break;
+                }
+                log_info(logFound, 'e');
+                eFlag = true;
                 break;
             }
             case 't': {

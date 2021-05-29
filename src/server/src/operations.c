@@ -19,27 +19,19 @@ fileEntry** openFile(request* r, int* result, int* dim, char* pathname, int flag
     // open failed
     if(*result < 0) {
         log_operation(logOperationString, "openFile", "failed", pathname);
-        return NULL;
+        if(expelledFile != NULL) {
+            *dim = 1;
+        }
+    } else {
+        log_operation(logOperationString, "openFile", "success", pathname);
+        if(expelledFile == NULL) {
+            return NULL;
+        }
+        *dim = 1;
     }
-
-    log_operation(logOperationString, "openFile", "success", pathname);
-    
-    // format output
-    if(*result == 0) {
-        return NULL;
-    }
-
-    if(expelledFile == NULL) {
-        *result = 1;
-        return NULL;
-    }
-
-    *result = 1;
 
     fileEntry** returnValue = _malloc(sizeof(fileEntry*));
     returnValue[0] = expelledFile;
-
-    *dim = 1;
 
     return returnValue;
 }
