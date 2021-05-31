@@ -518,41 +518,46 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
     *dim = 0;
 
     *result = -1;
+    
+    if(r->file->length > configs.maxFileSize) {
+        log_error("the received file is too big. Dropping write request...");
+    } else {
+        // acquire bucket lock in write mode
+        _pthread_rwlock_wrlock(&tableLock);
 
-    // acquire bucket lock in write mode
-    _pthread_rwlock_wrlock(&tableLock);
+        fileEntry* fileToWrite = get_fileEntry_ref(f->pathname, index);
+        if(fileToWrite != NULL && fileToWrite->owner == client->clientFd) {
+            int descriptor = isFileOpened(client, f->pathname);
+            if(descriptor != -1 && client->canWriteOnFile[descriptor]) {
 
-    fileEntry* fileToWrite = get_fileEntry_ref(f->pathname, index);
-    if(fileToWrite != NULL && fileToWrite->owner == client->clientFd) {
-        int descriptor = isFileOpened(client, f->pathname);
-        if(descriptor != -1 && client->canWriteOnFile[descriptor]) {
+                // update cache
+                filesToRemove = handleEdit(dim, fileToWrite, f->length);
+                
+                // remove files from filesystem before the insertion
+                for(int i=0; i<*dim; i++) {
+                    // get bucket index
+                    int removeIndex = hash((unsigned char*)filesToRemove[i]->pathname) % HASHTABLE_SIZE;
+                    remove_hashEntry_ref(filesToRemove[i]->pathname, removeIndex, true);
+                }
 
-            // update cache
-            filesToRemove = handleEdit(dim, fileToWrite, f->length);
-            
-            // remove files from filesystem before the insertion
-            for(int i=0; i<*dim; i++) {
-                // get bucket index
-                int removeIndex = hash((unsigned char*)filesToRemove[i]->pathname) % HASHTABLE_SIZE;
-                remove_hashEntry_ref(filesToRemove[i]->pathname, removeIndex, true);
+                // shallow copy file
+                free(fileToWrite->buf);
+
+                fileToWrite->buf = f->buf;
+                fileToWrite->bufLen = f->bufLen;
+                fileToWrite->content = f->content;
+                fileToWrite->length = f->length;
+                fileToWrite->pathname = f->pathname;
+
+                client->canWriteOnFile[descriptor] = false;
+
+                *result = 1;
             }
-
-            // shallow copy file
-            free(fileToWrite->buf);
-
-            fileToWrite->buf = f->buf;
-            fileToWrite->bufLen = f->bufLen;
-            fileToWrite->content = f->content;
-            fileToWrite->length = f->length;
-            fileToWrite->pathname = f->pathname;
-
-            client->canWriteOnFile[descriptor] = false;
-
-            *result = 1;
         }
+
+        _pthread_rwlock_unlock(&tableLock);
     }
 
-    _pthread_rwlock_unlock(&tableLock);
 
     // printStats();
 
@@ -577,39 +582,44 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
     if(descriptor != -1) {
         fileEntry* fileToEdit = get_fileEntry_ref(f->pathname, index);
         if(fileToEdit != NULL) {
-            // calculate offsets
-            int pathOffset = fileToEdit->pathname - fileToEdit->buf;
-            int contentOffset = fileToEdit->content - fileToEdit->buf;
+            if(r->file->length + fileToEdit->length > configs.maxFileSize) {
+                log_error("new filesize is too big. Dropping append request...");
+                *result = -1;
+            } else {
+                // calculate offsets
+                int pathOffset = fileToEdit->pathname - fileToEdit->buf;
+                int contentOffset = fileToEdit->content - fileToEdit->buf;
 
-            // calculate new sizes
-            int newSize = fileToEdit->bufLen + f->length;
-            int newContentLength = fileToEdit->length + f->length;
+                // calculate new sizes
+                int newSize = fileToEdit->bufLen + f->length;
+                int newContentLength = fileToEdit->length + f->length;
 
-            // update cache
-            filesToRemove = handleEdit(dim, fileToEdit, newContentLength);
-            
-            // remove files from filesystem before the insertion
-            for(int i=0; i<*dim; i++) {
-                // get bucket index
-                int removeIndex = hash((unsigned char*)filesToRemove[i]->pathname) % HASHTABLE_SIZE;
-                remove_hashEntry_ref(filesToRemove[i]->pathname, removeIndex, true);
+                // update cache
+                filesToRemove = handleEdit(dim, fileToEdit, newContentLength);
+                
+                // remove files from filesystem before the insertion
+                for(int i=0; i<*dim; i++) {
+                    // get bucket index
+                    int removeIndex = hash((unsigned char*)filesToRemove[i]->pathname) % HASHTABLE_SIZE;
+                    remove_hashEntry_ref(filesToRemove[i]->pathname, removeIndex, true);
+                }
+
+                // resize underlying buffer and copy content
+                fileToEdit->buf = _realloc(fileToEdit->buf, sizeof(char) * (newSize + 1));
+                fileToEdit->bufLen = newSize;
+                fileToEdit->buf[newSize] = '\0';
+                
+                // fix pointers changed due to realloc
+                fileToEdit->pathname = fileToEdit->buf + pathOffset;
+                fileToEdit->content = fileToEdit->buf + contentOffset;
+
+                memcpy(fileToEdit->content + fileToEdit->length, f->content, f->length);
+                fileToEdit->length = newContentLength;
+                
+                client->canWriteOnFile[descriptor] = false;
+
+                *result = 1;
             }
-
-            // resize underlying buffer and copy content
-            fileToEdit->buf = _realloc(fileToEdit->buf, sizeof(char) * (newSize + 1));
-            fileToEdit->bufLen = newSize;
-            fileToEdit->buf[newSize] = '\0';
-            
-            // fix pointers changed due to realloc
-            fileToEdit->pathname = fileToEdit->buf + pathOffset;
-            fileToEdit->content = fileToEdit->buf + contentOffset;
-
-            memcpy(fileToEdit->content + fileToEdit->length, f->content, f->length);
-            fileToEdit->length = newContentLength;
-            
-            client->canWriteOnFile[descriptor] = false;
-
-            *result = 1;
         }
     }
 

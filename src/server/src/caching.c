@@ -69,7 +69,7 @@ void freeCachingSystem() {
 int getCacheBuffer(fileEntry*** cacheBuffer, int* headPtr) {
     *cacheBuffer = cache;
     *headPtr = head;
-    return (tail + configs.maxFileCount - head) % configs.maxFileCount;
+    return currentFileSystemFileCount;
 }
 
 //

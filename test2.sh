@@ -17,7 +17,7 @@ sleep 2
 
 for i in {1..4}; do
     $CLIENT -q -p \
-            -w ./testFiles/test/test2folder2/client$i -D ./destDir &
+            -w ./testFiles/test/test2folder2/client$i -D ./destDir2 &
     pids[${i}]=$!
 done
 

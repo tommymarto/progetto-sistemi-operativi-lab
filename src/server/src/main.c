@@ -40,6 +40,14 @@ pthread_rwlock_t threadExitSigLock = PTHREAD_RWLOCK_INITIALIZER;
 typedef struct sigaction sig_act_t;
 
 
+void writeToPipe(int kind, int fd) {
+    char pipeMsg[8];
+    serializeInt(pipeMsg, kind);
+    serializeInt(pipeMsg + 4, fd);
+
+    writen(pipeFds[1], pipeMsg, sizeof(int) * 2);
+}
+
 bool threadExit() {
     bool result;
     _pthread_rwlock_rdlock(&threadExitSigLock);
@@ -49,8 +57,8 @@ bool threadExit() {
 }
 
 static void signalHandler(int signum) {
+    mainExitSig = true;
     if(signum == SIGINT || signum == SIGQUIT) {
-        mainExitSig = true;
         threadExitSig = true;
     } else if(signum == SIGHUP) {
         sighupReceived = true;
@@ -133,6 +141,8 @@ void cleanup() {
     log_report("server closed");
 }
 
+void* thread_select(void* arg);
+
 int main(int argc, char *argv[]) {
     atexit(cleanup);
     logging_level |= REPORT;
@@ -161,14 +171,21 @@ int main(int argc, char *argv[]) {
     setupServerSocket();
     
     // setup main vars
-    int _maxFds = MAX(sockfd, MAX(pipeFds[0], pipeFds[1]));
-    fd_set set, rdset;
+    fd_set set;
     FD_ZERO(&set);
-    FD_SET(sockfd, &set);
+    // FD_SET(sockfd, &set);
     FD_SET(pipeFds[0], &set);
     FD_SET(pipeFds[1], &set);
 
     // spawn workers
+    pthread_t select_thread;
+    if(pthread_create(&select_thread, NULL, thread_select, &set) != 0) {
+        log_fatal(strerror(errno));
+        log_fatal("unable to start the worker select_thread");
+        log_fatal("exiting the program...");
+        exit(EXIT_FAILURE);
+    }
+
     pthread_t notifier;
     if(pthread_create(&notifier, NULL, worker_notify, NULL) != 0) {
         log_fatal(strerror(errno));
@@ -189,19 +206,75 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    int clientsConnected = 0;
-    int maxClientsConnected = 0;
-
     log_report("server up and running");
 
     // main loop
     while(!mainExitSig) {
+        if(sighupReceived) {
+            break;
+        }
+
+        int conn = accept(sockfd, NULL, 0);
+        if (conn == -1) {
+            if(errno != EINTR) {
+                log_error("unable to accept connection from socket");
+            }
+            continue;
+        }
+
+        writeToPipe(2, conn);
+    }
+
+    printf("\n");
+
+    // cleanup
+    log_info("cleanup begin");
+
+    writeToPipe(3, 0);
+    
+    log_info("waiting for workers to finish");
+    if(pthread_join(select_thread, NULL)) {
+        log_error(strerror(errno));
+    }
+
+    close_int_queue(&requestQueue);
+    close_filesystem_pending_locks();   // close notifier queue
+
+    for(int i=0; i<configs.nThreadWorkers; i++) {
+        if(pthread_join(workers[i], NULL) != 0) {
+            log_error(strerror(errno));
+        }
+    }
+    if(pthread_join(notifier, NULL)) {
+        log_error(strerror(errno));
+    }
+    log_info("all workers finished");
+    
+    free_filesystem();
+    
+    for(int i=0; i<DEFAULT_MAX_CLIENTS; i++) {
+        clear_session(sessions + i);
+    }
+    log_info("terminating...");
+    return 0;
+}
+
+void* thread_select(void* arg) {
+    fd_set rdset, set = *(fd_set*)arg;
+
+    int _maxFds = MAX(sockfd, MAX(pipeFds[0], pipeFds[1]));
+    
+    int clientsConnected = 0;
+    int maxClientsConnected = 0;
+
+    bool selectExit = false;
+
+    while(!threadExit()) {
         rdset = set;
 
         // handle sighup soft termination
-        if(clientsConnected == 0 && sighupReceived) {
-            mainExitSig = true;
-            continue;
+        if((clientsConnected == 0 && sighupReceived && selectExit) || (selectExit && !sighupReceived)) {
+            break;
         }
 
         // accept incoming connections
@@ -216,28 +289,9 @@ int main(int argc, char *argv[]) {
         }
 
         // handle select success
-        for(int fd = 0; fd <= _maxFds && !mainExitSig; fd++) {
+        for(int fd = 0; fd <= _maxFds; fd++) {
             if(FD_ISSET(fd, &rdset)) {
-                if(fd == sockfd) {
-                    int conn = accept(sockfd, NULL, 0);
-                    if (conn == -1) {
-                        log_error("unable to accept connection from socket");
-                        continue;
-                    }
-
-                    boring_file_log(configs.logFileOutput, "fd: %d newConnection", conn);
-
-
-                    clientsConnected++;
-                    maxClientsConnected = MAX(maxClientsConnected, clientsConnected);
-
-                    log_info("connection accepted. Descriptor #%d", conn);
-                    init_session(sessions + conn);
-                    log_info("session initialized");
-
-                    FD_SET(conn, &set);
-                    _maxFds = MAX(_maxFds, conn);
-                } else if(fd == pipeFds[0]) {
+                if(fd == pipeFds[0]) {
                     char msg[8];
                     readn(fd, msg, sizeof(int) * 2);
 
@@ -265,6 +319,24 @@ int main(int argc, char *argv[]) {
                             _maxFds = MAX(_maxFds, msgFd);
                             break;
                         }
+                        case 2: { // signal connection accepted
+                            boring_file_log(configs.logFileOutput, "fd: %d newConnection", msgFd);
+
+                            log_info("connection accepted. Descriptor #%d", msgFd);
+                            init_session(sessions + msgFd);
+                            log_info("session initialized");
+
+                            FD_SET(msgFd, &set);
+                            _maxFds = MAX(_maxFds, msgFd);
+                            
+                            clientsConnected++;
+                            maxClientsConnected = MAX(maxClientsConnected, clientsConnected);
+                            break;
+                        }
+                        case 3: {
+                            selectExit = true;
+                            break;
+                        }
                     }
                 } else {
                     // remove fd from set so nobody can read except the thread that will handle the request                    
@@ -282,40 +354,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("\n");
-
-    // cleanup
-    log_info("cleanup begin");
-    
-    log_info("closing queue");
-    if(!threadExit()) {
-        wait_int_queue_empty(&requestQueue);
-        // not wait notifier queue 'cause someone may be still waiting for a lock
-
-        _pthread_rwlock_wrlock(&threadExitSigLock);
-        threadExitSig = true;
-        _pthread_rwlock_unlock(&threadExitSigLock);
-    }
-    close_int_queue(&requestQueue);
-    close_filesystem_pending_locks();   // close notifier queue
-    
-    log_info("waiting for workers to finish");
-    for(int i=0; i<configs.nThreadWorkers; i++) {
-        if(pthread_join(workers[i], NULL) != 0) {
-            log_error(strerror(errno));
-        }
-    }
-    if(pthread_join(notifier, NULL)) {
-        log_error(strerror(errno));
-    }
-    log_info("all workers finished");
-    
-    free_int_queue(&requestQueue);
-    free_filesystem();
-    for(int i=0; i<DEFAULT_MAX_CLIENTS; i++) {
-        clear_session(sessions + i);
-    }
+    _pthread_rwlock_wrlock(&threadExitSigLock);
+    threadExitSig = true;
+    _pthread_rwlock_unlock(&threadExitSigLock);
     boring_file_log(configs.logFileOutput, "maxClientsConnected: %d", maxClientsConnected);
-    log_info("terminating...");
-    return 0;
+
+    return NULL;
 }

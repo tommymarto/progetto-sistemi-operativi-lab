@@ -14,6 +14,7 @@
 #include <string.h>
 
 extern bool threadExit();
+extern void writeToPipe(int kind, int fd);
 extern config configs;
 extern int_queue requestQueue;
 extern session sessions[];
@@ -23,14 +24,6 @@ extern int pipeFds[];
 //
 //  utils
 //
-
-void writeToPipe(int kind, int fd) {
-    char pipeMsg[8];
-    serializeInt(pipeMsg, kind);
-    serializeInt(pipeMsg + 4, fd);
-
-    writen(pipeFds[1], pipeMsg, sizeof(int) * 2);
-}
 
 // returns -1 for errors or the number of bytesWritten
 int writeMessage(int n, char** content, int* sizes, int fd) {
@@ -141,51 +134,46 @@ int worker_body(request* r, int* bytesWritten) {
 
     log_info("received from fd %d file content length: %d", r->client->clientFd, r->file->length);
 
-    if(r->file->length > configs.maxFileSize) {
-        log_error("the received file is too big. Dropping request...");
-        result = -1;
-    } else {
-        switch (r->kind) {
-            case 'o': {
-                files = openFile(r, &result, &dim, r->file->pathname, r->flags);
-                break;
-            }
-            case 'r': {
-                files = readFile(r, &result, &dim, r->file->pathname);
-                break;
-            }
-            case 'n': {
-                files = readNFiles(r, &result, &dim, r->flags);
-                break;
-            }
-            case 'w': {
-                files = writeFile(r, &result, &dim, r->file);
-                break;
-            }
-            case 'a': {
-                files = appendToFile(r, &result, &dim, r->file);
-                break;
-            }
-            case 'l': {
-                result = lockFile(r, r->file->pathname);
-                break;
-            }
-            case 'u': {
-                result = unlockFile(r, r->file->pathname);
-                break;
-            }
-            case 'c': {
-                result = closeFile(r, r->file->pathname);
-                break;
-            }
-            case 'R': {
-                result = removeFile(r, r->file->pathname);
-                break;
-            }
-            default: {
-                log_error("unhandled request type '%c', dropping request", r->kind);
-                result = -1;
-            }
+    switch (r->kind) {
+        case 'o': {
+            files = openFile(r, &result, &dim, r->file->pathname, r->flags);
+            break;
+        }
+        case 'r': {
+            files = readFile(r, &result, &dim, r->file->pathname);
+            break;
+        }
+        case 'n': {
+            files = readNFiles(r, &result, &dim, r->flags);
+            break;
+        }
+        case 'w': {
+            files = writeFile(r, &result, &dim, r->file);
+            break;
+        }
+        case 'a': {
+            files = appendToFile(r, &result, &dim, r->file);
+            break;
+        }
+        case 'l': {
+            result = lockFile(r, r->file->pathname);
+            break;
+        }
+        case 'u': {
+            result = unlockFile(r, r->file->pathname);
+            break;
+        }
+        case 'c': {
+            result = closeFile(r, r->file->pathname);
+            break;
+        }
+        case 'R': {
+            result = removeFile(r, r->file->pathname);
+            break;
+        }
+        default: {
+            log_error("unhandled request type '%c', dropping request", r->kind);
+            result = -1;
         }
     }
     

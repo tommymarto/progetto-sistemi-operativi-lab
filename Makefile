@@ -41,7 +41,7 @@ $(BIN_DIR_PROJECTS):
 	mkdir -p $@
 
 cleanTestOutput:
-	rm -rf destDir
+	rm -rf destDir*
 	rm -f serverLog.txt
 
 test1: cleanTestOutput
@@ -75,6 +75,6 @@ test3: cleanTestOutput
 	cp -r ./src ./testFiles/test/src
 
 	@./bin/server/bin/server & \
-	timeout 30 ./test3.sh; \
+	./test3.sh; \
 	kill -2 $$!; \
 	wait

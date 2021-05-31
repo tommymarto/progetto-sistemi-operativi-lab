@@ -48,13 +48,12 @@ while read -u 3 line; do
     elif [[ $line =~ ("bytesWritten: ")([0-9]+) ]]; then
     	N_WRITES=$(( N_WRITES + 1 ))
         BYTES_WRITTEN=$(( BYTES_WRITTEN + ${BASH_REMATCH[2]} ))
+        
+    elif [[ $line =~ ("requestServedBy: ")([0-9]+) ]]; then
+        WORKER_REQUESTS_HANDLED[${BASH_REMATCH[2]}]=$((WORKER_REQUESTS_HANDLED[${BASH_REMATCH[2]}] + 1))
     
-    elif [[ $line =~ ("unlockFile: ")([^$nl]*) ]]; then  
-        # lockFile is a prefix of unlockFile so unlockFile must be checked first
-    	N_UNLOCK=$(( N_UNLOCK + 1 ))
-    
-    elif [[ $line =~ ("lockFile: ")([^$nl]*) ]]; then
-    	N_LOCK=$(( N_LOCK + 1 ))
+    elif [[ $line =~ "requestServedByNotifier" ]]; then
+        NOTIFIER_REQUESTS_HANDLED=$(( NOTIFIER_REQUESTS_HANDLED + 1 ))
     
     elif [[ $line =~ ("openFile: ")(.*?)" flags: "([0-9]+) ]]; then
         # O_CREATE = 1<<0, O_LOCK = 1<<1
@@ -66,7 +65,14 @@ while read -u 3 line; do
     
     elif [[ $line =~ ("closeFile: ")([^$nl]*) ]]; then
         N_CLOSE=$(( N_CLOSE + 1 ))
+
+    elif [[ $line =~ ("lockFile: ")([^$nl]*) ]]; then
+    	N_LOCK=$(( N_LOCK + 1 ))
     
+    elif [[ $line =~ ("unlockFile: ")([^$nl]*) ]]; then  
+        # lockFile is a prefix of unlockFile so unlockFile must be checked first
+    	N_UNLOCK=$(( N_UNLOCK + 1 ))
+
     elif [[ $line =~ ("maxFileSystemSize: ")([0-9]+) ]]; then
         MAX_FILESYSTEM_SIZE=$(( MAX_FILESYSTEM_SIZE > ${BASH_REMATCH[2]} ? MAX_FILESYSTEM_SIZE : ${BASH_REMATCH[2]} ))
     
@@ -78,12 +84,6 @@ while read -u 3 line; do
     
     elif [[ $line =~ ("maxClientsConnected: ")([0-9]+) ]]; then
         MAX_SIMULTANEOUS_CONNECTIONS=$(( MAX_SIMULTANEOUS_CONNECTIONS > ${BASH_REMATCH[2]} ? MAX_SIMULTANEOUS_CONNECTIONS : ${BASH_REMATCH[2]} ))
-    
-    elif [[ $line =~ ("requestServedBy: ")([0-9]+) ]]; then
-        WORKER_REQUESTS_HANDLED[${BASH_REMATCH[2]}]=$((WORKER_REQUESTS_HANDLED[${BASH_REMATCH[2]}] + 1))
-    
-    elif [[ $line =~ "requestServedByNotifier" ]]; then
-        NOTIFIER_REQUESTS_HANDLED=$(( NOTIFIER_REQUESTS_HANDLED + 1 ))
     fi
 done
 
@@ -114,7 +114,7 @@ echo "║   TOTAL_BYTES_READ             : $(printf "%10d" $(( BYTES_READ / (102
 echo "║   AVG_BYTES_READ               : ${AVG_BYTES_READ} (B)   ║"
 echo "║   N_WRITES                     : $(printf "%10d" ${N_WRITES})          ║"
 echo "║   TOTAL_BYTES_WRITTEN          : $(printf "%10d" ${BYTES_WRITTEN})    (B)   ║"
-echo "║   TOTAL_BYTES_WRITTEN          : $(printf "%10d" $(( BYTES_READ / (1024*1024) )))   (MB)   ║"
+echo "║   TOTAL_BYTES_WRITTEN          : $(printf "%10d" $(( BYTES_WRITTEN / (1024*1024) )))   (MB)   ║"
 echo "║   AVG_BYTES_WRITTEN            : ${AVG_BYTES_WRITTEN} (B)   ║"
 echo "║                                                      ║"
 echo "╟──────────────────────────────────────────────────────╢"
@@ -131,7 +131,8 @@ echo "╟───────────────────────�
 echo "║                                                      ║"
 echo "║   FILESYSTEM STATISTICS                              ║"
 echo "║                                                      ║"
-echo "║   MAX_FILESYSTEM_SIZE          : $(printf "%10d" ${MAX_FILESYSTEM_SIZE})          ║"
+echo "║   MAX_FILESYSTEM_SIZE          : $(printf "%10d" ${MAX_FILESYSTEM_SIZE})    (B)   ║"
+echo "║   MAX_FILESYSTEM_SIZE          : $(printf "%10d" $(( MAX_FILESYSTEM_SIZE / (1024*1024) )))   (MB)   ║"
 echo "║   MAX_FILESYSTEM_FILE_COUNT    : $(printf "%10d" ${MAX_FILESYSTEM_FILE_COUNT})          ║"
 echo "║   CACHE_ACTIVATIONS            : $(printf "%10d" ${CACHE_ACTIVATIONS})          ║"
 echo "║                                                      ║"

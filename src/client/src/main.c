@@ -183,7 +183,7 @@ int main(int argc, char *argv[]) {
         // set timeout 5 seconds from now
         struct timespec timeout;
         timespec_get(&timeout, TIME_UTC);
-        timeout.tv_sec += 5;
+        timeout.tv_sec += 15;
 
         bool connectionFailed = false;
 

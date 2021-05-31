@@ -14,11 +14,13 @@ $CLIENT -t 200 -p \
         -r ./testFiles/test/otherRandomGeneratedFiles/file1.txt \
         -W ${CUR_PWD}/testFiles/test/file2.txt \
         -r ${CUR_PWD}/testFiles/test/file2.txt \
-        -c ${CUR_PWD}/testFiles/test/file2.txt \
         -R 3 -d ./destDir \
         -l ./testFiles/test/otherRandomGeneratedFiles/innerFolder/file1.txt \
         -l ./testFiles/test/otherRandomGeneratedFiles/innerFolder/file2.txt \
-        -u ./testFiles/test/otherRandomGeneratedFiles/innerFolder/file2.txt
+        -u ./testFiles/test/otherRandomGeneratedFiles/innerFolder/file2.txt \
+        -a ${CUR_PWD}/testFiles/test/file2.txt \
+        -r ${CUR_PWD}/testFiles/test/file2.txt -d ./destDir2 \
+        -c ${CUR_PWD}/testFiles/test/file2.txt \
 echo "end sequential test"
 
 printf "\n\n\n\n"
