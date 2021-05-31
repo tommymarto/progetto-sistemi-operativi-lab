@@ -6,7 +6,8 @@ if (( $# >= 1 )); then
     CLIENT="$1"
 fi
 
-LIST_OF_FILES=($( tree -f -F -i ./testFiles/test | grep -v /$ | tail -n +2 | head -n -2 ))
+# LIST_OF_FILES=($( tree -f -F -i ./testFiles/test | grep -v /$ | tail -n +2 | head -n -2 ))
+LIST_OF_FILES=($( cd ./testFiles/test && find . | tail -n +2 ))
 
 RUNNING=0
 MIN_PROC=16
