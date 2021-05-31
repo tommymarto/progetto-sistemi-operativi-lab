@@ -223,7 +223,7 @@ void* worker_start(void* arg) {
         boring_file_log(configs.logFileOutput, "fd: %d requestServedBy: %d", fd, *threadId);
 
         char* msgBuf = NULL;
-        int bufLen;
+        int bufLen = 0;
         int bytesRead = readMessage(fd, &msgBuf, &bufLen);
         if(bytesRead == -2) {
             // this should only happen when readn is interrupted by a signal so the condition (threadExit) is set
