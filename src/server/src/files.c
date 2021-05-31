@@ -25,7 +25,7 @@ struct hashEntry {
     int queueTail;
 };
 
-pthread_rwlock_t tableLock = PTHREAD_RWLOCK_INITIALIZER;
+pthread_mutex_t tableLock = PTHREAD_MUTEX_INITIALIZER;
 hashEntry* filesystem[HASHTABLE_SIZE] = { NULL };
 
 request_queue clientsToNotify;
@@ -295,7 +295,7 @@ void init_filesystem() {
 }
 
 void filesystem_handle_connectionClosed(session* closedClient) {
-    _pthread_rwlock_wrlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
 
     // clear pending lock request
     clean_pending_lock_request(closedClient, false);
@@ -310,7 +310,7 @@ void filesystem_handle_connectionClosed(session* closedClient) {
         }
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 }
 
 void free_filesystem() {
@@ -345,16 +345,17 @@ fileEntry* filesystem_get_fileEntry(char* pathname) {
     fileEntry* result = NULL;
 
     // acquire bucket lock in read mode
-    _pthread_rwlock_rdlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
 
     fileEntry* f = get_fileEntry_ref(pathname, index);
 
     // copy out result
     if(f != NULL) {
         result = deep_copy_file(f);
+        handleUsage(f);
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     return result;
 }
@@ -387,7 +388,9 @@ fileEntry** filesystem_get_n_fileEntry(int* dim, int n) {
 
     fileEntry** result = _malloc(sizeof(fileEntry*) * n);
     for(int i=0; i<n; i++) {
-        result[i] = deep_copy_file(cacheBuffer[(head + elements[i]) % configs.maxFileCount]);
+        fileEntry* randomFile = cacheBuffer[(head + elements[i]) % configs.maxFileCount];
+        result[i] = deep_copy_file(randomFile);
+        handleUsage(randomFile);
     }
     return result;
 }
@@ -397,11 +400,11 @@ bool filesystem_fileExists(char* pathname) {
     int index = hash((unsigned char*)pathname) % HASHTABLE_SIZE;
 
     // acquire bucket lock in read mode
-    _pthread_rwlock_rdlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
     
     bool result = get_fileEntry_ref(pathname, index) != NULL;
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     return result;
 }
@@ -417,12 +420,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
 
     session* client = r->client;
 
-    // choose acquire mode depending on operations to be performed
-    if(!(flags & O_CREATE) && !(flags & O_LOCK)) {
-        _pthread_rwlock_rdlock(&tableLock);
-    } else {
-        _pthread_rwlock_wrlock(&tableLock);
-    }
+    _pthread_mutex_lock(&tableLock);
 
     int indexOfFile = isFileOpened(client, pathname);
 
@@ -485,7 +483,10 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
     }
 
     if(!failed) {
-        if(get_fileEntry_ref(pathname, index) != NULL) {
+        fileEntry* fileToOpen = get_fileEntry_ref(pathname, index);
+        if(fileToOpen != NULL) {
+            handleUsage(fileToOpen);
+
             int pathLen = strlen(pathname);
             client->openedFiles[descriptor] = _malloc(sizeof(char) * (pathLen + 1));
             strncpy(client->openedFiles[descriptor], pathname, pathLen + 1);
@@ -499,7 +500,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         }
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     *result = failed ? -1 : *result;
 
@@ -523,7 +524,7 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
         log_error("the received file is too big. Dropping write request...");
     } else {
         // acquire bucket lock in write mode
-        _pthread_rwlock_wrlock(&tableLock);
+        _pthread_mutex_lock(&tableLock);
 
         fileEntry* fileToWrite = get_fileEntry_ref(f->pathname, index);
         if(fileToWrite != NULL && fileToWrite->owner == client->clientFd) {
@@ -555,7 +556,7 @@ fileEntry** filesystem_writeFile(int* result, int* dim, request* r, fileEntry* f
             }
         }
 
-        _pthread_rwlock_unlock(&tableLock);
+        _pthread_mutex_unlock(&tableLock);
     }
 
 
@@ -576,7 +577,7 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
     *result = -1;
 
     // acquire bucket lock in write mode
-    _pthread_rwlock_wrlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
 
     int descriptor = isFileOpened(client, f->pathname);
     if(descriptor != -1) {
@@ -623,7 +624,7 @@ fileEntry** filesystem_appendToFile(int* result, int* dim, request* r, fileEntry
         }
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     // printStats();
 
@@ -639,14 +640,14 @@ int filesystem_lockAcquire(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    _pthread_rwlock_wrlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
     
     int fileIndex = client->isFileOpened(client, pathname);
     if(fileIndex != -1) {
         result = lockfile(r, pathname, index, fileIndex);
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     return result;
 }
@@ -660,7 +661,7 @@ int filesystem_lockRelease(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    _pthread_rwlock_wrlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
     
     int fileIndex = client->isFileOpened(client, pathname);
     if(fileIndex != -1) {
@@ -668,7 +669,7 @@ int filesystem_lockRelease(request* r, char* pathname) {
         client->canWriteOnFile[fileIndex] = false;
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     return result;
 }
@@ -682,7 +683,7 @@ int filesystem_removeFile(request* r, char* pathname) {
     int result = -1;
 
     // acquire bucket lock in write mode
-    _pthread_rwlock_wrlock(&tableLock);
+    _pthread_mutex_lock(&tableLock);
     
 
     int descriptor = isFileOpened(client, pathname);
@@ -704,7 +705,7 @@ int filesystem_removeFile(request* r, char* pathname) {
         }
     }
 
-    _pthread_rwlock_unlock(&tableLock);
+    _pthread_mutex_unlock(&tableLock);
 
     // printStats();
 

@@ -11,6 +11,7 @@
 extern config configs;
 
 fileEntry** cache;
+int cacheSize;
 int head, tail;
 
 int currentFileSystemSize = 0;
@@ -21,7 +22,7 @@ int activations = 0;
 
 static void printActiveFiles() {
     log_fatal("╔═══════════════════════════════════════════════");
-    log_fatal("║ FILESYSTEM USAGE ADDITIONAL INFO:             ");
+    log_fatal("║ Head: %5d Tail: %5d CurrentCount: %5d         ", head, tail, currentFileSystemFileCount);
     log_fatal("║                                               ");
     log_fatal("║ List of files still stored:                   ");
 
@@ -29,7 +30,7 @@ static void printActiveFiles() {
 
     for(int i=0; i<currentFileSystemFileCount; i++) {
         log_fatal("║ - %s", cache[curHead]->pathname);
-        curHead = (curHead + 1) % configs.maxFileCount;
+        curHead = (curHead + 1) % cacheSize;
     }
 
     log_fatal("║                                               ");
@@ -58,7 +59,8 @@ static void printStats() {
 }
 
 void initCachingSystem() {
-    cache = _malloc(sizeof(fileEntry*) * configs.maxFileCount);
+    cache = _malloc(sizeof(fileEntry*) * (configs.maxFileCount + 1));
+    cacheSize = configs.maxFileCount + 1;
 }
 
 void freeCachingSystem() {
@@ -85,7 +87,7 @@ fileEntry* handleInsertionFIFO(fileEntry* file) {
 
     // file is expected to fit in memory so no queue bad index is accessed, otherwise it's handled in the readMessage phase
     if(expectedFileSystemFileCount > configs.maxFileCount) {
-        index = (index + 1) % configs.maxFileCount;
+        index = (index + 1) % cacheSize;
         expectedFileSystemFileCount--;
         removedFileSize = cache[index]->length;
         itemRemoved = true;
@@ -97,7 +99,7 @@ fileEntry* handleInsertionFIFO(fileEntry* file) {
     if(itemRemoved) {
         activations++;
         fileToRemove = cache[head];
-        head = (head + 1) % configs.maxFileCount;
+        head = (head + 1) % cacheSize;
 
         log_warn("CACHING SUBSTITUTION ACTIVATED (FILE COUNT). FILE REMOVED: %s FILE INSERTED: %s", fileToRemove->pathname, file->pathname);
         boring_file_log(configs.logFileOutput, "cache substitution (count) inFile: %s outFile: %s", file->pathname, fileToRemove->pathname);
@@ -105,7 +107,7 @@ fileEntry* handleInsertionFIFO(fileEntry* file) {
 
     // insert new file
     cache[tail] = file;
-    tail = (tail + 1) % configs.maxFileCount;
+    tail = (tail + 1) % cacheSize;
 
     // update stats
     currentFileSystemSize -= removedFileSize;
@@ -113,6 +115,10 @@ fileEntry* handleInsertionFIFO(fileEntry* file) {
     maxFileSystemFileCount = MAX(maxFileSystemFileCount, currentFileSystemFileCount);
 
     return fileToRemove;
+}
+
+void handleUsageFIFO(fileEntry* file) {
+
 }
 
 fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
@@ -130,13 +136,13 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
         // skip file to be edited
         if(cache[index] == file) {
             indexOfEditedFile = index;
-            index = (index + 1) % configs.maxFileCount;
+            index = (index + 1) % cacheSize;
             continue;
         }
 
         (*dim)++;
-        index = (index + 1) % configs.maxFileCount;
         expectedFileSystemSize -= cache[index]->length;
+        index = (index + 1) % cacheSize;
         expectedFileSystemFileCount--;
     }
 
@@ -150,11 +156,11 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
             // don't remove file to be edited
             if(cache[head] == file) {
                 i--;
-                head = (head + 1) % configs.maxFileCount;
+                head = (head + 1) % cacheSize;
                 continue;
             }
             filesToRemove[i] = cache[head];
-            head = (head + 1) % configs.maxFileCount;
+            head = (head + 1) % cacheSize;
 
             log_warn("CACHING SUBSTITUTION ACTIVATED (FILESYSTEM SIZE). FILE REMOVED: %s FILE EDITED: %s", filesToRemove[i]->pathname, file->pathname);
             boring_file_log(configs.logFileOutput, "cache substitution (size) inFile: %s outFile: %s", file->pathname, filesToRemove[i]->pathname);
@@ -163,7 +169,7 @@ fileEntry** handleEditFIFO(int* dim, fileEntry* file, int newSize) {
 
     // move edited file if it was skipped
     if(indexOfEditedFile != -1) {
-        head = (head + configs.maxFileCount - 1) % configs.maxFileCount;
+        head = (head + cacheSize - 1) % cacheSize;
         cache[head] = cache[indexOfEditedFile];
     }
 
@@ -182,21 +188,20 @@ void handleRemovalFIFO(fileEntry* file) {
     // find file to be removed
     while(true) {
         if(cache[indexOfFileToBeRemoved] == file) {
-            indexOfFileToBeRemoved = indexOfFileToBeRemoved;
             break;
         }
 
-        indexOfFileToBeRemoved = (indexOfFileToBeRemoved + 1) % configs.maxFileCount;
+        indexOfFileToBeRemoved = (indexOfFileToBeRemoved + 1) % cacheSize;
     }
 
-    int numOfFilesToBeShifted = (indexOfFileToBeRemoved + configs.maxFileCount - head) % configs.maxFileCount;
+    int numOfFilesToBeShifted = (indexOfFileToBeRemoved + cacheSize - head + 1) % cacheSize;
 
     // shift head of buffer
     for(int i=0; i<numOfFilesToBeShifted; i++) {
-        indexOfFileToBeRemoved = (indexOfFileToBeRemoved + configs.maxFileCount - 1) % configs.maxFileCount;
-        cache[(indexOfFileToBeRemoved + 1) % configs.maxFileCount] = cache[indexOfFileToBeRemoved];
+        indexOfFileToBeRemoved = (indexOfFileToBeRemoved + cacheSize - 1) % cacheSize;
+        cache[(indexOfFileToBeRemoved + 1) % cacheSize] = cache[indexOfFileToBeRemoved];
     }
-    head = (head + 1) % configs.maxFileCount;
+    head = (head + 1) % cacheSize;
 
     currentFileSystemSize -= file->length;
     currentFileSystemFileCount--;
@@ -207,15 +212,161 @@ void handleRemovalFIFO(fileEntry* file) {
 //
 
 fileEntry* handleInsertionLRU(fileEntry* file) {
-    return NULL;
+    int index = head;
+
+    int expectedFileSystemFileCount = currentFileSystemFileCount + 1;
+    int removedFileSize = 0;
+    int itemRemoved = false;
+
+    // file is expected to fit in memory so no queue bad index is accessed, otherwise it's handled in the readMessage phase
+    if(expectedFileSystemFileCount > configs.maxFileCount) {
+        index = (index + 1) % cacheSize;
+        expectedFileSystemFileCount--;
+        removedFileSize = cache[index]->length;
+        itemRemoved = true;
+    }
+
+    // prepare files to be removed
+    fileEntry* fileToRemove = NULL;
+
+    if(itemRemoved) {
+        activations++;
+        fileToRemove = cache[head];
+        head = (head + 1) % cacheSize;
+
+        log_warn("CACHING SUBSTITUTION ACTIVATED (FILE COUNT). FILE REMOVED: %s FILE INSERTED: %s", fileToRemove->pathname, file->pathname);
+        boring_file_log(configs.logFileOutput, "cache substitution (count) inFile: %s outFile: %s", file->pathname, fileToRemove->pathname);
+    }
+
+    // insert new file
+    cache[tail] = file;
+    tail = (tail + 1) % cacheSize;
+
+    // update stats
+    currentFileSystemSize -= removedFileSize;
+    currentFileSystemFileCount = expectedFileSystemFileCount;
+    maxFileSystemFileCount = MAX(maxFileSystemFileCount, currentFileSystemFileCount);
+
+    return fileToRemove;
+}
+
+void handleUsageLRU(fileEntry* file) {
+    // find used file
+    int indexOfUsedFile = head;
+    while(true) {
+        if(cache[indexOfUsedFile] == file) {
+            break;
+        }
+
+        indexOfUsedFile = (indexOfUsedFile + 1) % cacheSize;
+
+        if(indexOfUsedFile > 100) {
+            exit(EXIT_FAILURE);
+        }
+    }
+
+    // move file to list tail
+    cache[tail] = cache[indexOfUsedFile];
+    tail = (tail + 1) % cacheSize;
+
+    // calculate shift count
+    int numOfFilesToBeShifted = (indexOfUsedFile + cacheSize - head + 1) % cacheSize;
+
+    // shift head of buffer
+    for(int i=0; i<numOfFilesToBeShifted; i++) {
+        indexOfUsedFile = (indexOfUsedFile + cacheSize - 1) % cacheSize;
+        cache[(indexOfUsedFile + 1) % cacheSize] = cache[indexOfUsedFile];
+    }
+
+    head = (head + 1) % cacheSize;
 }
 
 fileEntry** handleEditLRU(int* dim, fileEntry* file, int newSize) {
-    return NULL;
+    // newSize too big handled by filesystem
+
+    *dim = 0;
+    int index = head;
+    int indexOfEditedFile = -1;
+
+    int expectedFileSystemFileCount = currentFileSystemFileCount;
+    int expectedFileSystemSize = currentFileSystemSize + (newSize - file->length);
+
+    // file is expected to fit in memory so no queue bad index is accessed, otherwise it's handled in the readMessage phase
+    while(expectedFileSystemSize > configs.maxMemorySize) {
+        // skip file to be edited
+        if(cache[index] == file) {
+            indexOfEditedFile = index;
+            index = (index + 1) % cacheSize;
+            continue;
+        }
+
+        (*dim)++;
+        expectedFileSystemSize -= cache[index]->length;
+        index = (index + 1) % cacheSize;
+        expectedFileSystemFileCount--;
+    }
+
+    // prepare file to remove
+    fileEntry** filesToRemove = NULL;
+
+    if(*dim != 0) {
+        activations++;
+        filesToRemove = _malloc(sizeof(fileEntry*) * (*dim));
+        for(int i=0; i<*dim; i++) {
+            // don't remove file to be edited
+            if(cache[head] == file) {
+                i--;
+                head = (head + 1) % cacheSize;
+                continue;
+            }
+            filesToRemove[i] = cache[head];
+            head = (head + 1) % cacheSize;
+
+            log_warn("CACHING SUBSTITUTION ACTIVATED (FILESYSTEM SIZE). FILE REMOVED: %s FILE EDITED: %s", filesToRemove[i]->pathname, file->pathname);
+            boring_file_log(configs.logFileOutput, "cache substitution (size) inFile: %s outFile: %s", file->pathname, filesToRemove[i]->pathname);
+        }
+    }
+
+    // move edited file if it was skipped
+    if(indexOfEditedFile != -1) {
+        cache[tail] = cache[indexOfEditedFile];
+        tail = (tail + 1) % cacheSize;
+    } else {
+        handleUsageLRU(file);
+    }
+
+    // update stats
+    currentFileSystemSize = expectedFileSystemSize;
+    maxFileSystemSize = MAX(maxFileSystemSize, currentFileSystemSize);
+    currentFileSystemFileCount = expectedFileSystemFileCount;
+    maxFileSystemFileCount = MAX(maxFileSystemFileCount, currentFileSystemFileCount);
+
+    return filesToRemove;
 }
 
 void handleRemovalLRU(fileEntry* file) {
+    int indexOfFileToBeRemoved = head;
 
+    // find file to be removed
+    while(true) {
+        if(cache[indexOfFileToBeRemoved] == file) {
+            break;
+        }
+
+        indexOfFileToBeRemoved = (indexOfFileToBeRemoved + 1) % cacheSize;
+    }
+
+    int numOfFilesToBeShifted = (indexOfFileToBeRemoved + cacheSize - head) % cacheSize;
+
+    // shift head of buffer
+    for(int i=0; i<numOfFilesToBeShifted; i++) {
+        indexOfFileToBeRemoved = (indexOfFileToBeRemoved + cacheSize - 1) % cacheSize;
+        cache[(indexOfFileToBeRemoved + 1) % cacheSize] = cache[indexOfFileToBeRemoved];
+    }
+    head = (head + 1) % cacheSize;
+
+    currentFileSystemSize -= file->length;
+    currentFileSystemFileCount--;
 }
 
 //
@@ -231,11 +382,25 @@ fileEntry* handleInsertion(fileEntry* file) {
         // if policy not specified, fallback to LRU
         result = handleInsertionLRU(file);
     }
-    
+
+    // log_error("handleInsertion");
     // printActiveFiles();
     // printStats();
     boring_file_log(configs.logFileOutput, "fileInsertion: %s currentFileSystemSize: %d currentFileSystemFileCount: %d", file->pathname, currentFileSystemSize, currentFileSystemFileCount);
     return result;
+}
+
+void handleUsage(fileEntry* file) {
+    if(strcmp(configs.cachePolicy, "FIFO") == 0) {
+        handleUsageFIFO(file);
+    } else {
+        // if policy not specified, fallback to LRU
+        handleUsageLRU(file);
+    }
+
+    // log_error("handleUsage");
+    // printActiveFiles();
+    // printStats();
 }
 
 fileEntry** handleEdit(int* dim, fileEntry* file, int newSize) {
@@ -248,6 +413,7 @@ fileEntry** handleEdit(int* dim, fileEntry* file, int newSize) {
         result = handleEditLRU(dim, file, newSize);
     }
     
+    // log_error("handleEdit");
     // printActiveFiles();
     // printStats();
     boring_file_log(configs.logFileOutput, "fileEdit: %s currentFileSystemSize: %d currentFileSystemFileCount: %d", file->pathname, currentFileSystemSize, currentFileSystemFileCount);
@@ -262,6 +428,7 @@ void handleRemoval(fileEntry* file) {
         handleRemovalLRU(file);
     }
 
+    // log_error("handleRemoval");
     // printActiveFiles();
     // printStats();
     boring_file_log(configs.logFileOutput, "fileRemoval: %s currentFileSystemSize: %d currentFileSystemFileCount: %d", file->pathname, currentFileSystemSize, currentFileSystemFileCount);
