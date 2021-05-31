@@ -7,7 +7,7 @@ if (( $# >= 1 )); then
 fi
 
 # LIST_OF_FILES=($( tree -f -F -i ./testFiles/test | grep -v /$ | tail -n +2 | head -n -2 ))
-LIST_OF_FILES=($( cd ./testFiles/test && find . | tail -n +2 ))
+LIST_OF_FILES=($( find ./testFiles/test -type f | tail -n +2 ))
 
 RUNNING=0
 MIN_PROC=16
@@ -18,10 +18,10 @@ elapsed=0
 start_time="$(date -u +%s)"
 while (( elapsed <= 30 )); do
     while (( $RUNNING < $MIN_PROC )); do
-        RANDOM_FILES=($(shuf -e -n 20 "${LIST_OF_FILES[@]}"))
+        RANDOM_FILES=($(shuf -e -n 40 "${LIST_OF_FILES[@]}"))
         ADD_RANDOM_FILES=($( for i in ${RANDOM_FILES[@]}; do printf -- " -W ${i} "; done ))
-        READ_RANDOM_FILES=($( for i in {0..10}; do printf -- " -r ${LIST_OF_FILES[$i]} "; done ))
-        REMOVE_RANDOM_FILES=($( for i in {0..10}; do printf -- " -c ${LIST_OF_FILES[$i]} "; done ))
+        READ_RANDOM_FILES=($( for i in {0..20}; do printf -- " -r ${LIST_OF_FILES[$i]} "; done ))
+        REMOVE_RANDOM_FILES=($( for i in {0..20}; do printf -- " -c ${LIST_OF_FILES[$i]} "; done ))
         # echo "$CLIENT -p ${ADD_RANDOM_FILES[@]} -D ./destDir ${READ_FILES} -c ${RANDOM_FILES[0]} "
         $CLIENT -q \
                 ${ADD_RANDOM_FILES[@]} \

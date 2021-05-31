@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <errno.h>
 
 int readFromFile(const char* pathname, char** buf) {
     *buf = NULL;
@@ -20,9 +21,13 @@ int readFromFile(const char* pathname, char** buf) {
     if(f == NULL) {
         return -1;
     }
-    fseek(f, 0L, SEEK_END);
-    fileSize = ftell(f);
-    rewind(f);
+
+    struct stat st;
+    if(stat(pathname, &st) < 0) {
+        log_error(strerror(errno));
+        return -1;
+    }
+    fileSize = st.st_size;
 
     *buf = _malloc(sizeof(char) * (fileSize + 1));
     fread(*buf, sizeof(char), fileSize, f);
