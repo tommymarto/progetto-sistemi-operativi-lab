@@ -260,6 +260,14 @@ int main(int argc, char *argv[]) {
 }
 
 void* thread_select(void* arg) {
+    // mask signals so they're handled by the main thread
+    sigset_t sigset;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGINT);
+    sigaddset(&sigset, SIGQUIT);
+    sigaddset(&sigset, SIGHUP);
+    pthread_sigmask(SIG_SETMASK, &sigset, NULL);
+
     fd_set rdset, set = *(fd_set*)arg;
 
     int _maxFds = MAX(sockfd, MAX(pipeFds[0], pipeFds[1]));

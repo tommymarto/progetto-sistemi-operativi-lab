@@ -203,6 +203,14 @@ int worker_body(request* r, int* bytesWritten) {
 }
 
 void* worker_start(void* arg) {
+    // mask signals so they're handled by the main thread
+    sigset_t sigset;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGINT);
+    sigaddset(&sigset, SIGQUIT);
+    sigaddset(&sigset, SIGHUP);
+    pthread_sigmask(SIG_SETMASK, &sigset, NULL);
+
     int* threadId = (int*)arg;
 
     log_info("spawned worker %d", *threadId);
@@ -267,6 +275,14 @@ void* worker_start(void* arg) {
 
 // notifier
 void* worker_notify(void* arg) {
+    // mask signals so they're handled by the main thread
+    sigset_t sigset;
+    sigemptyset(&sigset);
+    sigaddset(&sigset, SIGINT);
+    sigaddset(&sigset, SIGQUIT);
+    sigaddset(&sigset, SIGHUP);
+    pthread_sigmask(SIG_SETMASK, &sigset, NULL);
+
     log_info("spawned worker notify");
     while(!threadExit()) {
         request* r = filesystem_getClientToNotify();
