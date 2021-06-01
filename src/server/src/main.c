@@ -24,6 +24,12 @@
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
+#define failIfIsNegativeOne(x, msg) \
+if(x == -1) {                       \
+    log_fatal(msg);                 \
+    exit(EXIT_FAILURE);             \
+}                                   \
+
 extern int logging_level;
 extern config configs;
 
@@ -70,18 +76,33 @@ void setSignalHandlers() {
     // signal handling setup
     int signals[] = { SIGINT, SIGQUIT, SIGHUP };
 
+    sigset_t sigset;
     sig_act_t s;
+
+    // temporary mask signals
+    failIfIsNegativeOne(sigfillset(&sigset), strerror(errno));
+    failIfIsNegativeOne(pthread_sigmask(SIG_SETMASK, &sigset, NULL), strerror(errno));
+
+    // setup signal handler function
     memset(&s, 0, sizeof(sig_act_t));
     s.sa_handler = signalHandler;
     
     // set action for signals
     for (int i=0; i<3; ++i) {
-        if (sigaction(signals[i], &s, NULL) == -1) {
-            log_error("sigaction failed for signal %d", signals[i]);
-            log_error("using default signal handler");
-        }
+        failIfIsNegativeOne(sigaction(signals[i], &s, NULL), strerror(errno));
         log_info("registered signal handler for %d", signals[i]);
     }
+
+    memset(&s, 0, sizeof(sig_act_t));
+    s.sa_handler = SIG_IGN;
+
+    // ignore for sigpipe
+    failIfIsNegativeOne(sigaction(SIGPIPE, &s, NULL), strerror(errno));
+    log_info("registered signal handler for %d", SIGPIPE);
+
+    // unmask
+    failIfIsNegativeOne(sigemptyset(&sigset), strerror(errno));
+    failIfIsNegativeOne(pthread_sigmask(SIG_SETMASK, &sigset, NULL), strerror(errno));
 }
 
 void setupServerSocket() {
@@ -263,11 +284,13 @@ int main(int argc, char *argv[]) {
 void* thread_select(void* arg) {
     // mask signals so they're handled by the main thread
     sigset_t sigset;
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGINT);
-    sigaddset(&sigset, SIGQUIT);
-    sigaddset(&sigset, SIGHUP);
-    pthread_sigmask(SIG_SETMASK, &sigset, NULL);
+
+    failIfIsNegativeOne(sigemptyset(&sigset), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGINT), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGQUIT), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGHUP), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGPIPE), strerror(errno));
+    failIfIsNegativeOne(pthread_sigmask(SIG_SETMASK, &sigset, NULL), strerror(errno));
 
     fd_set rdset, set = *(fd_set*)arg;
 

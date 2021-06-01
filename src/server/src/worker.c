@@ -12,6 +12,13 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <errno.h>
+
+#define failIfIsNegativeOne(x, msg) \
+if(x == -1) {                       \
+    log_fatal(msg);                 \
+    exit(EXIT_FAILURE);             \
+}                                   \
 
 extern bool threadExit();
 extern void writeToPipe(int kind, int fd);
@@ -205,11 +212,13 @@ int worker_body(request* r, int* bytesWritten) {
 void* worker_start(void* arg) {
     // mask signals so they're handled by the main thread
     sigset_t sigset;
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGINT);
-    sigaddset(&sigset, SIGQUIT);
-    sigaddset(&sigset, SIGHUP);
-    pthread_sigmask(SIG_SETMASK, &sigset, NULL);
+
+    failIfIsNegativeOne(sigemptyset(&sigset), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGINT), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGQUIT), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGHUP), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGPIPE), strerror(errno));
+    failIfIsNegativeOne(pthread_sigmask(SIG_SETMASK, &sigset, NULL), strerror(errno));
 
     int* threadId = (int*)arg;
 
@@ -284,11 +293,13 @@ void* worker_start(void* arg) {
 void* worker_notify(void* arg) {
     // mask signals so they're handled by the main thread
     sigset_t sigset;
-    sigemptyset(&sigset);
-    sigaddset(&sigset, SIGINT);
-    sigaddset(&sigset, SIGQUIT);
-    sigaddset(&sigset, SIGHUP);
-    pthread_sigmask(SIG_SETMASK, &sigset, NULL);
+
+    failIfIsNegativeOne(sigemptyset(&sigset), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGINT), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGQUIT), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGHUP), strerror(errno));
+    failIfIsNegativeOne(sigaddset(&sigset, SIGPIPE), strerror(errno));
+    failIfIsNegativeOne(pthread_sigmask(SIG_SETMASK, &sigset, NULL), strerror(errno));
 
     log_info("spawned worker notify");
     while(!threadExit()) {
