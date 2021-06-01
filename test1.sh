@@ -21,6 +21,7 @@ $CLIENT -t 200 -p \
         -a ${CUR_PWD}/testFiles/test/file2.txt \
         -r ${CUR_PWD}/testFiles/test/file2.txt -d ./destDir2 \
         -c ${CUR_PWD}/testFiles/test/file2.txt \
+        -R 0 -d ./destDir2 \
 echo "end sequential test"
 
 printf "\n\n\n\n"

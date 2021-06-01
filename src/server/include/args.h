@@ -18,4 +18,3 @@
 #define DEFAULT_LOG_VERBOSITY 2
 
 void handleConfiguration(int argc, char* argv[]);
-void parseFileArguments(char* configFileName, config* configs);

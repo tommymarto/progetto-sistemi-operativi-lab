@@ -16,6 +16,7 @@
 extern int errno;
 extern int logging_level;
 
+// global app configs
 config configs = {
     .cachePolicy = DEFAULT_CACHE_POLICY,
     .socketFileName =  DEFAULT_SOCKET_FILENAME,
@@ -34,9 +35,13 @@ int fpeek(FILE *stream) {
     return c;
 }
 
+// parse a configuration file of the following format:
+// OPTION=VALUE
+// with maxlen(OPTION) = maxlen(VALUE) = 127
 void parseFileArguments(char* configFileName, config* configs) {
     FILE *configFile = fopen(configFileName, "r");
     
+    // if can't open the file fallback to default configuration
     if(configFile == NULL) {
         log_error("unable to read configuration file...");
         log_error("proceeding with default config...");
@@ -48,11 +53,13 @@ void parseFileArguments(char* configFileName, config* configs) {
     long intValue;
     while (fpeek(configFile) != EOF)
     {
+        // skip comment
         if(fpeek(configFile) == '#') {
             fscanf(configFile, "%*[^\n]\n");
             continue;
         }
 
+        // if fscanf has found 2 elements then, edit the right config 
         if(fscanf(configFile, "%127[^=]=%127[^\n] ", option, value) == 2) {
             if(strcmp(option, "N_THREAD_WORKERS") == 0) {
                 log_info(logFoundWithParams, option, value);
@@ -129,12 +136,15 @@ void handleConfiguration(int argc, char* argv[]) {
             log_error("cannot read current path, using default configuration");
             return;
         } else {
+            // delete executable name from path
             while(buff[--sz] != '/') {}
 
+            // check the full path of the config file is a valid path (+2 because of the / between dir and the filename and the terminating \0)
             if(len + sz + 2 >= PATH_MAX) {
                 log_error("cannot read current path, using default configuration");
                 return;
             } else {
+                // if everything ok, build config filename else fallback to config file in the caller folder
                 strcpy(buff + sz, "/" DEFAULT_CONFIGURATION_FILE);
                 buff[sz + len + 2] = '\0';
                 configFile = buff;
@@ -142,6 +152,7 @@ void handleConfiguration(int argc, char* argv[]) {
         }
     }
 
+    // config log file
     configs.logFileOutput = fopen("serverLog.txt", "w");
     if(configs.logFileOutput == NULL) {
         log_error("unable to open logging file. Proceeding without operation logging...");
@@ -153,8 +164,9 @@ void handleConfiguration(int argc, char* argv[]) {
     // handle max fd_set size and the special value 0
     configs.maxClientsConnected = configs.maxClientsConnected == 0 ? DEFAULT_MAX_CLIENTS : MIN(configs.maxClientsConnected, DEFAULT_MAX_CLIENTS);
     
-    // handle file size misconfiguration
+    // convert from MBytes to bytes
     configs.maxMemorySize *= 1024 * 1024;
+    // handle file size misconfiguration
     configs.maxFileSize = MIN(configs.maxFileSize, configs.maxMemorySize);
 
     // handle verbosity level

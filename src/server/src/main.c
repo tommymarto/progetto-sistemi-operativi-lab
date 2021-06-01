@@ -41,6 +41,7 @@ typedef struct sigaction sig_act_t;
 
 
 void writeToPipe(int kind, int fd) {
+    // no need for lock, atomic write
     char pipeMsg[8];
     serializeInt(pipeMsg, kind);
     serializeInt(pipeMsg + 4, fd);
@@ -173,7 +174,6 @@ int main(int argc, char *argv[]) {
     // setup main vars
     fd_set set;
     FD_ZERO(&set);
-    // FD_SET(sockfd, &set);
     FD_SET(pipeFds[0], &set);
     FD_SET(pipeFds[1], &set);
 
@@ -214,6 +214,7 @@ int main(int argc, char *argv[]) {
             break;
         }
 
+        // accept incoming connections
         int conn = accept(sockfd, NULL, 0);
         if (conn == -1) {
             if(errno != EINTR) {
@@ -285,7 +286,7 @@ void* thread_select(void* arg) {
             break;
         }
 
-        // accept incoming connections
+        // wait for ready file descriptors
         int readyDescriptors = select(_maxFds + 1, &rdset, NULL, NULL, NULL);
         if(readyDescriptors == -1) {
             if(errno != EINTR) {
@@ -301,7 +302,10 @@ void* thread_select(void* arg) {
             if(FD_ISSET(fd, &rdset)) {
                 if(fd == pipeFds[0]) {
                     char msg[8];
-                    readn(fd, msg, sizeof(int) * 2);
+                    if(readn(fd, msg, sizeof(int) * 2) < 0) {
+                        log_error("error reading from pipe");
+                        continue;
+                    }
 
                     int msgKind = deserializeInt(msg);
                     int msgFd = deserializeInt(msg + 4);
@@ -341,7 +345,7 @@ void* thread_select(void* arg) {
                             maxClientsConnected = MAX(maxClientsConnected, clientsConnected);
                             break;
                         }
-                        case 3: {
+                        case 3: { // termination message from main
                             selectExit = true;
                             break;
                         }
@@ -362,6 +366,7 @@ void* thread_select(void* arg) {
         }
     }
 
+    // set exit condition for workers
     _pthread_rwlock_wrlock(&threadExitSigLock);
     threadExitSig = true;
     _pthread_rwlock_unlock(&threadExitSigLock);

@@ -215,6 +215,8 @@ void* worker_start(void* arg) {
 
     log_info("spawned worker %d", *threadId);
     while(!threadExit()) {
+
+        // pop client from ready queue
         int fd = remove_int_queue(&requestQueue);
         if(fd == -1) {
             continue;
@@ -222,15 +224,17 @@ void* worker_start(void* arg) {
 
         boring_file_log(configs.logFileOutput, "fd: %d requestServedBy: %d", fd, *threadId);
 
+        // read message from client
         char* msgBuf = NULL;
         int bufLen = 0;
         int bytesRead = readMessage(fd, &msgBuf, &bufLen);
         if(bytesRead == -2) {
-            // this should only happen when readn is interrupted by a signal so the condition (threadExit) is set
+            // read less then expected
             log_info("read less then expected bytes, dropping message");
             free(msgBuf);
             continue;
         } if(bytesRead == -1) {
+            // read failed
             log_error("failed read from client %d", fd);
             writeToPipe(1, fd);
             free(msgBuf);
@@ -244,6 +248,7 @@ void* worker_start(void* arg) {
 
         boring_file_log(configs.logFileOutput, "fd: %d bytesRead: %d", fd, bytesRead);
 
+        // parse request
         request* r = new_request(msgBuf, bufLen, sessions + fd);
 
         boring_file_log(configs.logFileOutput, "fd: %d pathname: %s", fd, r->file->pathname);
@@ -256,6 +261,7 @@ void* worker_start(void* arg) {
             boring_file_log(configs.logFileOutput, "fd: %d bytesWritten: %d", fd, bytesWritten);
         }
         
+        // write response to client if result != 0 (because if response is 0 client must still wait on a lock)
         if(result != 0) {
             if(result == -1 || result == 1) {
                 r->free(r);
@@ -263,6 +269,7 @@ void* worker_start(void* arg) {
                 r->free_keep_file_content(r);
             }
 
+            // notify select thread
             writeToPipe(1, fd);
         }
 
@@ -285,6 +292,7 @@ void* worker_notify(void* arg) {
 
     log_info("spawned worker notify");
     while(!threadExit()) {
+        // wait for client to notify
         request* r = filesystem_getClientToNotify();
         if(r == NULL) {
             continue;
@@ -306,6 +314,7 @@ void* worker_notify(void* arg) {
             r->free(r);
         }
 
+        // notify select
         log_info("notifying select %d", clientFd);
         writeToPipe(1, clientFd);
 

@@ -16,19 +16,22 @@
 int readFromFile(const char* pathname, char** buf) {
     *buf = NULL;
 
-    long fileSize;
     FILE* f = fopen(pathname, "r");
     if(f == NULL) {
         return -1;
     }
 
+    // get filesize
+    long fileSize;
     struct stat st;
     if(stat(pathname, &st) < 0) {
         log_error(strerror(errno));
+        log_error("stat failed");
         return -1;
     }
     fileSize = st.st_size;
 
+    // allocate + read
     *buf = _malloc(sizeof(char) * (fileSize + 1));
     fread(*buf, sizeof(char), fileSize, f);
     (*buf)[fileSize] = '\0';
@@ -46,17 +49,19 @@ void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim
         strcat(nameBuf, "mkdir -p ");
         strcat(nameBuf, dirname);
 
+        // adjust buf to support dirname ending with or without /
         if(nameBuf[9 + dirnameSize - 1] != '/') {
             nameBuf[9 + dirnameSize] = '/';
             nameBuf[9 + dirnameSize + 1] = '\0';
             dirnameSize++;
         }
 
-
+        // write each file
         for(int i=0; i<dim; i+=2) {
             int contentSize = sizes[i];
             char* contentPtr = content[i];
 
+            // adjust filename removing leading / or .
             while(contentPtr[0] == '.' || contentPtr[0] == '/') {
                 contentPtr++;
                 contentSize--;
@@ -64,6 +69,7 @@ void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim
 
             strncpy(nameBuf + 9 + dirnameSize, contentPtr, PATH_MAX - dirnameSize);
 
+            // trick to call mkdir without using a different string
             int folderNameIndex = 9 + dirnameSize + contentSize;
             while(nameBuf[folderNameIndex] != '/') {
                 folderNameIndex--;
@@ -82,7 +88,7 @@ void writeResultsToFile(const char* dirname, char** content, int* sizes, int dim
                 continue;
             }
 
-            log_info("writing to file: %s", nameBuf);
+            // actual write
             fwrite(content[i+1], sizeof(char), sizes[i+1], f);
             fclose(f);
         }

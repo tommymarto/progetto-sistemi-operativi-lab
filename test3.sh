@@ -22,7 +22,6 @@ while (( elapsed <= 30 )); do
         ADD_RANDOM_FILES=($( for i in ${RANDOM_FILES[@]}; do printf -- " -W ${i} "; done ))
         READ_RANDOM_FILES=($( for i in {0..20}; do printf -- " -r ${LIST_OF_FILES[$i]} "; done ))
         REMOVE_RANDOM_FILES=($( for i in {0..20}; do printf -- " -c ${LIST_OF_FILES[$i]} "; done ))
-        # echo "$CLIENT -p ${ADD_RANDOM_FILES[@]} -D ./destDir ${READ_FILES} -c ${RANDOM_FILES[0]} "
         $CLIENT -q \
                 ${ADD_RANDOM_FILES[@]} \
                 -D ./destDir \

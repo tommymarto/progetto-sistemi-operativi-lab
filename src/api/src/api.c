@@ -19,8 +19,10 @@ int nanosleep(const struct timespec *req, struct timespec *rem);
 
 extern int errno;
 
-api_info lastApiCall;
 static int sockfd = -1;
+
+// utils for reporting status
+api_info lastApiCall;
 static struct timeval t_start, t_end;
 static int serverResponseError = 0;
 static void setLastApiCall(char* opName, char* opStatus, const char* file, int bytesRead, int bytesWritten) {
@@ -28,7 +30,6 @@ static void setLastApiCall(char* opName, char* opStatus, const char* file, int b
     lastApiCall.opStatus = opStatus;
     lastApiCall.errorCode = serverResponseError;
     snprintf(lastApiCall.file, FILE_LEN, "%s", file);
-    // strncpy(lastApiCall.file, file, FILE_LEN);
     lastApiCall.bytesRead = bytesRead;
     lastApiCall.bytesWritten = bytesWritten;
     lastApiCall.duration = (t_end.tv_sec - t_start.tv_sec) * 1000000 + t_end.tv_usec - t_start.tv_usec;
@@ -91,8 +92,10 @@ static int writeMessage(char kind, const char* pathname, const char* content, in
     return bytesWritten > 0 ? bytesWritten : -1;
 }
 
-// returns -error for errors or the number of bytesRead
+// returns -1 for errors or the number of bytesRead
 static int readMessage(char*** content, int** sizes, int* size, char** msg) {
+    serverResponseError = 0;
+    
     int bytesRead, totalBytesRead = 0, msgSize;
     char intBuf[4];
 
@@ -111,7 +114,8 @@ static int readMessage(char*** content, int** sizes, int* size, char** msg) {
     totalBytesRead += bytesRead;
 
     if(msgSize < 0) {
-        return msgSize;
+        serverResponseError = -msgSize;
+        return -1;
     } else if (msgSize == 0) {
         // return success, read = headerSize
         return sizeof(int);
@@ -265,6 +269,7 @@ int openFile(const char* pathname, int flags) {
     return simpleApi(pathname, flags, "openFile", 'o');
 }
 
+// same as openFile with additional support for cache replacement file save
 int betterOpenFile(const char* pathname, int flags, const char* dirname) {
     errno = 0;
     gettimeofday(&t_start, NULL);

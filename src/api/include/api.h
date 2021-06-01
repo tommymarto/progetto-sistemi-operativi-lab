@@ -1,9 +1,10 @@
 #pragma once
 
 #include <stdlib.h>
+#include <limits.h>
 #include <time.h>
 
-#define FILE_LEN 256
+#define FILE_LEN PATH_MAX
 
 enum OPEN_MODES { O_CREATE = 1, O_LOCK = 1<<1 };
 

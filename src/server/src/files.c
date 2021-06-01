@@ -260,7 +260,7 @@ void clean_pending_lock_request(session* client, bool needToNotify) {
         int index = hash((unsigned char*)pathnamePendingLock) % HASHTABLE_SIZE;
         hashEntry* h = get_hashEntry_ref(pathnamePendingLock, index);
         
-        // it shouldn't happen to have a pending request on a non-existing file
+        // it shouldn't happen to have a pending request on a non-existing file but checking is always extra safety
         if(h != NULL) {
             // find request to delete
             for(int i=h->queueHead; i<h->queueTail; i++) {
@@ -388,6 +388,7 @@ fileEntry** filesystem_get_n_fileEntry(int* dim, int n) {
 
     fileEntry** result = _malloc(sizeof(fileEntry*) * n);
     for(int i=0; i<n; i++) {
+        // deep copy selected files and notify the cache handler of their usage
         fileEntry* randomFile = cacheBuffer[(head + elements[i]) % configs.maxFileCount];
         result[i] = deep_copy_file(randomFile);
         handleUsage(randomFile);
@@ -474,6 +475,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         failed = failed && (get_fileEntry_ref(pathname, index) == NULL);
     }
 
+    // if lock requested try acquire
     if((flags & O_LOCK) && !failed) {
         *result = lockfile(r, pathname, index, descriptor);
 
@@ -482,6 +484,7 @@ fileEntry* filesystem_openFile(int* result, request* r, char* pathname, int flag
         }
     }
 
+    // if request not failed, notify usage and mark the file as opened in the client session
     if(!failed) {
         fileEntry* fileToOpen = get_fileEntry_ref(pathname, index);
         if(fileToOpen != NULL) {

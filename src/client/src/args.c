@@ -80,6 +80,7 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 break;
             }
             case ':': {
+                // handle option -R when used without arguments
                 if(optopt == 'R') {
                     log_info(logFound, opt);
                     log_info("using default value for option -R");
@@ -160,6 +161,8 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 break;
             }
             case 'w': {
+                // particular handling because w accepts either one or two options and the second one must be an int
+
                 log_info(logFoundWithParams, opt, optarg);
                 vector_string* v_args = char_array_split(optarg, strlen(optarg), ",");
 
@@ -193,6 +196,7 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
             case 'R': {
                 long tmp;
 
+                // needed because -R -otherFlags is misinterpreted by getopt
                 if(!argumentValid()) {
                     log_info(logFound, opt);
                     log_info(usingDefaultValue, opt);
@@ -200,6 +204,8 @@ vector_request* parseCommandLineArguments(int argc, char *argv[]) {
                 } else if(!strToInt(optarg, &tmp)) {
                     log_error("option 'R' optional argument expected to be int");
                     break;
+                } else {
+                    log_info(logFoundWithParams, opt, optarg);
                 }
                 
                 handleSingleParameterWithExtra(requests, opt, "", (int)tmp, index);

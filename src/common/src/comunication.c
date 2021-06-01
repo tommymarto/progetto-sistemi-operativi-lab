@@ -18,7 +18,7 @@ int deserializeInt(char* src) {
     return (actualSrc[3] << 24) | (actualSrc[2] << 16) | (actualSrc[1] << 8) | actualSrc[0];
 }
 
-// reads n bytes from fd unless condition becomes true
+// reads n bytes from fd
 ssize_t readn(int fd, char *ptr, size_t bytesToRead) {
     ssize_t bytesRead = 0;
  
@@ -44,7 +44,7 @@ ssize_t readn(int fd, char *ptr, size_t bytesToRead) {
     return bytesRead;
 }
  
-// writes n bytes from fd unless condition becomes true
+// writes n bytes from fd
 ssize_t writen(int fd, char *ptr, size_t bytesToWrite) {
     ssize_t bytesWritten = 0;
  

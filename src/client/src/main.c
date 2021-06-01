@@ -19,6 +19,12 @@ const char* helpString = "\nclient manual:\n\
     -p:                                                                         \n\
         Enable logs on operations.                                              \n\
 \n\
+    -q:                                                                         \n\
+        Quiet logs. Immediate effect if it's the first option                   \n\
+\n\
+    -e:                                                                         \n\
+        Disable error logging.                                                  \n\
+\n\
     -w dirname[,n=0]                                                            \n\
         Send n files from dirname to the server.                                \n\
         If n=0 all files in dirname are sent.                                   \n\
@@ -64,6 +70,10 @@ const char* helpString = "\nclient manual:\n\
     -c file1[,file2]                                                            \n\
         Delete from the server the files given as arguments.                    \n\
         Examples: -c myfile1,myfile2   -c myfile                                \n\
+\n\
+    -a file1[,file2]                                                            \n\
+        Appends the content of file1 to file1 on the server.                    \n\
+        Examples: -a myfile1,myfile2   -a myfile                                \n\
 \n";
 
 #define logAndSkipIfOperationFailed(kind, function)                                                 \
@@ -98,6 +108,7 @@ extern api_info lastApiCall;
 #define logApiString "operation: %s, state: %s, file: %s, bytesRead: %d, bytesWritten: %d, duration: %.6f"
 #define log_last_api_call() log_operation(logApiString, lastApiCall.opName, lastApiCall.opStatus, lastApiCall.file, lastApiCall.bytesRead, lastApiCall.bytesWritten, (double)lastApiCall.duration / 1000)
 
+// recursively traverse the folder tree and send a write request for each file until remaining is > 0
 int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
     int result = 0; 
 
@@ -108,7 +119,7 @@ int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
     }
 
     struct dirent* ent;
-    char path[PATH_MAX];
+    char path[PATH_MAX + 1];
     while((ent = readdir(dir)) != NULL && *remaining > 0) {
         if(ent->d_type == DT_DIR && ent->d_name[0] != '.') {
             // visit recursively
@@ -133,16 +144,12 @@ int handleSmallWFlag(char* dirname, char* saveDir, int* remaining) {
     return result;
 }
 
-void flushAll() {
-    fflush(NULL);
-}
-
 int main(int argc, char *argv[]) {
 
     // some setup
-    atexit(flushAll);
     logging_level |= INFO;
 
+    // handle -q fast path
     if(argc >= 2 && strcmp(argv[1], "-q") == 0) {
             logging_level &= ~INFO;
     }
@@ -154,8 +161,9 @@ int main(int argc, char *argv[]) {
         log_info("found help flag. Printing manual and terminating...");
         printf("%s", helpString); 
     } else {
-
         // real main
+
+        // handle other config flags
         if(pFlag) {
             log_info("found log flag. Enabling operation logging...");
             logging_level |= OPERATION;
@@ -172,15 +180,16 @@ int main(int argc, char *argv[]) {
             log_info("option f not found. Using default socket filename...");
             socketFileName = new_string(DEFAULT_SOCKET_FILENAME);
         }
-        // setting sleep time between requests
+        // setup sleep time between requests
         struct timespec sleepTime = { .tv_sec = tFlag / 1000, .tv_nsec = ((long)tFlag % 1000) * 1000000};
 
         log_info("fixing requests format and checking for -d and -D bad usage...");
+        // checks -d and -D flag usage and associates the correct dest folder for each request
         expandRequests(requests);
         
         log_info("connecting on socket: %s", socketFileName->content);
 
-        // set timeout 5 seconds from now
+        // set timeout 15 seconds from now
         struct timespec timeout;
         timespec_get(&timeout, TIME_UTC);
         timeout.tv_sec += 15;
@@ -240,7 +249,6 @@ int main(int argc, char *argv[]) {
                         size_t bufSize;
                         char* buf;
 
-
                         result = betterOpenFile(r->content, 0, r->dir);
                         logAndSkipIfOperationFailed("r", "openFile");
                         result = readFile(r->content, (void**)&buf, &bufSize);
@@ -249,22 +257,14 @@ int main(int argc, char *argv[]) {
                             log_error("error while processing flag 'r': readFile failed. Skipping request...");
                         }
                         if(result != -1) {
-
                             if(r->dir != NULL) {
                                 // write result to file
 
-                                // copy because filename fix works in place
+                                // preparation
                                 int contentLen = strlen(r->content);
-                                char* contentCopy = _malloc(sizeof(char) * (contentLen + 1));
-                                memcpy(contentCopy, r->content, contentLen);
-                                contentCopy[contentLen] = '\0';
-
-                                // actual preparation + write
-                                char* contents[2] = { contentCopy, buf };
+                                char* contents[2] = { r->content, buf };
                                 int sizes[2] = { contentLen, bufSize };
                                 writeResultsToFile(r->dir, contents, sizes, 2);
-
-                                free(contentCopy);
                             }
                         }
                         free(buf);
